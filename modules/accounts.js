@@ -26,15 +26,19 @@ function $(id) { return document.getElementById(id); }
 
 async function _ensureAccountsData() {
   if (!_pricesLoaded) {
-    await loadInventoryPrices();
+    try { await loadInventoryPrices(); } catch (e) { console.warn("[Accounts] Prices load failed:", e); }
     _pricesLoaded = true;
   }
   if (_accountsDataDirty || !_accountsData) {
-    const snap = await db.collection("merchants")
-      .where("status", "!=", "archived")
-      .orderBy("createdAt", "desc")
-      .get();
-    _accountsData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    try {
+      const snap = await db.collection("merchants")
+        .orderBy("createdAt", "desc")
+        .get();
+      _accountsData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.error("[Accounts] Failed to load merchants:", e);
+      _accountsData = [];
+    }
     merchantsCache = _accountsData;
     _accountsDataDirty = false;
   }
@@ -229,7 +233,8 @@ async function toggleMerchantCardStatus(id) {
     await recordAudit("update", "merchants", id, { status: m.status }, { status: newStatus },
       newStatus === "active" ? "تفعيل التاجر" : "إيقاف التاجر");
     await loadMerchants();
-    _accountsDataDirty = true;
+    _accountsData = merchantsCache;
+    _accountsDataDirty = false;
     renderMerchantCards();
     showToast(newStatus === "active" ? "تم تفعيل التاجر بنجاح" : "تم إيقاف التاجر", "success");
   } catch (err) {
