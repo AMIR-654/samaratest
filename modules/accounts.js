@@ -45,6 +45,21 @@ async function _ensureAccountsData() {
   return _accountsData;
 }
 
+// Composite index required for server-side archived filtering:
+// firestore.indexes.json:
+// {
+//   "indexes": [
+//     {
+//       "collectionGroup": "merchants",
+//       "queryScope": "COLLECTION",
+//       "fields": [
+//         { "fieldPath": "status", "order": "ASCENDING" },
+//         { "fieldPath": "createdAt", "order": "DESCENDING" }
+//       ]
+//     }
+//   ]
+// }
+
 function initAccounts() {
   return _ensureAccountsData();
 }
@@ -63,6 +78,9 @@ function getFilteredMerchants() {
   }
 
   switch (_currentFilter) {
+    case "all":
+      data = data.filter((m) => m.status !== "archived");
+      break;
     case "active":
       data = data.filter((m) => m.status === "active");
       break;
