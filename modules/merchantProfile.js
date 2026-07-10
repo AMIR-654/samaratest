@@ -90,23 +90,18 @@ async function renderProfileData() {
 // ===== Skeleton Loading =====
 
 function renderProfileSkeleton() {
-  document.getElementById("profileBody").innerHTML = `
-    <div class="profile-summary-row">
-      ${Array(6).fill(0).map(() => `
-        <div class="profile-skeleton-card">
-          <div class="skeleton-line" style="width:60%;height:12px;margin-bottom:8px;"></div>
-          <div class="skeleton-line" style="width:80%;height:24px;"></div>
-        </div>`).join("")}
-    </div>
-    <div class="profile-prices-row">
-      ${Array(5).fill(0).map(() => `
-        <div class="profile-skeleton-price">
-          <div class="skeleton-line" style="width:40px;height:32px;margin:0 auto 4px;"></div>
-          <div class="skeleton-line" style="width:60px;height:12px;margin:0 auto;"></div>
-        </div>`).join("")}
-    </div>
-    <div class="skeleton-line" style="width:100%;height:200px;margin-top:16px;border-radius:12px;"></div>
-    <div class="skeleton-line" style="width:100%;height:120px;margin-top:16px;border-radius:12px;"></div>`;
+  document.getElementById("profileSummaryCards").innerHTML = Array(6).fill(0).map(() => `
+    <div class="profile-skeleton-card">
+      <div class="skeleton-line" style="width:60%;height:12px;margin-bottom:8px;"></div>
+      <div class="skeleton-line" style="width:80%;height:24px;"></div>
+    </div>`).join("");
+  document.getElementById("profileCardPrices").innerHTML = Array(5).fill(0).map(() => `
+    <div class="profile-skeleton-price">
+      <div class="skeleton-line" style="width:40px;height:32px;margin:0 auto 4px;"></div>
+      <div class="skeleton-line" style="width:60px;height:12px;margin:0 auto;"></div>
+    </div>`).join("");
+  document.getElementById("profileAccountingBody").innerHTML = `<tr><td colspan="6"><div class="skeleton-line" style="width:100%;height:200px;border-radius:12px;"></div></td></tr>`;
+  document.getElementById("profileSettlementBody").innerHTML = `<div class="skeleton-line" style="width:100%;height:120px;border-radius:12px;"></div>`;
 }
 
 // ===== Header =====
