@@ -22,8 +22,6 @@ function markAccountsDirty() {
   _accountsDataDirty = true;
 }
 
-function $(id) { return document.getElementById(id); }
-
 async function _ensureAccountsData() {
   if (!_pricesLoaded) {
     try { await loadInventoryPrices(); } catch (e) { console.warn("[Accounts] Prices load failed:", e); }
@@ -35,6 +33,7 @@ async function _ensureAccountsData() {
         .orderBy("createdAt", "desc")
         .get();
       _accountsData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      console.log("[Accounts] Fetched", _accountsData.length, "merchants");
     } catch (e) {
       console.error("[Accounts] Failed to load merchants:", e);
       _accountsData = [];
@@ -66,6 +65,7 @@ function initAccounts() {
 
 function getFilteredMerchants() {
   let data = _accountsData || [];
+  const rawCount = data.length;
   const term = _searchTerm.toLowerCase().trim();
 
   if (term) {
@@ -75,6 +75,7 @@ function getFilteredMerchants() {
       (m.username || "").toLowerCase().includes(term) ||
       (m.id || "").toLowerCase().includes(term)
     );
+    console.log("[Accounts] Search filter:", term, "reduced from", rawCount, "to", data.length);
   }
 
   switch (_currentFilter) {
@@ -104,6 +105,7 @@ function getFilteredMerchants() {
       break;
   }
 
+  console.log("[Accounts] Filtered: raw=", rawCount, "filter=", _currentFilter, "result=", data.length);
   return data;
 }
 
@@ -146,6 +148,8 @@ function renderMerchantCards() {
     `;
   }
 
+  console.log("[Accounts] renderMerchantCards: total=", total, "filtered=", filtered.length, "filter=", _currentFilter, "search=", _searchTerm);
+
   if (!filtered.length) {
     const hasFilters = _currentFilter !== "all" || _searchTerm;
     grid.innerHTML = hasFilters
@@ -155,6 +159,7 @@ function renderMerchantCards() {
   }
 
   grid.innerHTML = filtered.map((m) => renderMerchantCard(m)).join("");
+  console.log("[Accounts] Rendered", filtered.length, "merchant cards (total fetched:", total + ")");
 }
 
 function renderMerchantCard(m) {
@@ -275,6 +280,11 @@ async function renderAccountsMerchantList() {
 // ===== Tab Activation =====
 
 async function onAccountsTabActivated(subTab) {
+  // Always re-fetch from Firestore when tab is activated
+  _accountsDataDirty = true;
+  _pricesLoaded = false;
+  _currentFilter = "all";
+  _searchTerm = "";
   await initAccounts();
 
   if (subTab === "profile" && currentMerchantProfileId) {
@@ -286,6 +296,9 @@ async function onAccountsTabActivated(subTab) {
   } else {
     $("merchantListView").style.display = "block";
     $("accountingScreenView").style.display = "none";
+    // Reset search input
+    const searchInput = $("merchantSearchInput");
+    if (searchInput) searchInput.value = "";
     await renderAccountsMerchantList();
   }
 }
@@ -330,3 +343,20 @@ window.filterMerchantCards = filterMerchantCards;
 window.setMerchantFilter = setMerchantFilter;
 window.toggleCardMoreMenu = toggleCardMoreMenu;
 window.toggleMerchantCardStatus = toggleMerchantCardStatus;
+
+// ===== Debug helper =====
+window.debugAccounts = function() {
+  console.log("[Accounts DEBUG] ============");
+  console.log("[Accounts DEBUG] _accountsData:", _accountsData ? _accountsData.length + " items" : "null");
+  console.log("[Accounts DEBUG] _accountsDataDirty:", _accountsDataDirty);
+  console.log("[Accounts DEBUG] _currentFilter:", _currentFilter);
+  console.log("[Accounts DEBUG] _searchTerm:", _searchTerm);
+  console.log("[Accounts DEBUG] merchantsCache:", merchantsCache ? merchantsCache.length + " items" : "null");
+  console.log("[Accounts DEBUG] currentMerchantProfileId:", currentMerchantProfileId);
+  if (_accountsData && _accountsData.length > 0) {
+    console.log("[Accounts DEBUG] First merchant:", JSON.stringify(_accountsData[0], null, 2));
+    console.log("[Accounts DEBUG] All merchant IDs:", _accountsData.map(m => m.id + "(" + m.name + ",status=" + m.status + ",createdAt=" + (m.createdAt ? "yes" : "no") + ")").join(", "));
+  }
+  console.log("[Accounts DEBUG] Filtered count:", getFilteredMerchants().length);
+  console.log("[Accounts DEBUG] ============");
+};
