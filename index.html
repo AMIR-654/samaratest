@@ -673,32 +673,65 @@
         <div id="accountsMerchantList"></div>
       </div>
 
-      <!-- Profile View -->
+      <!-- Profile View (Redesigned) -->
       <div id="accountsProfileContainer" style="display:none;">
-        <button class="btn btn-sm btn-outline" onclick="backToMerchantList()" style="margin-bottom:12px;">← العودة إلى القائمة</button>
-        <div class="card" style="padding:20px;">
-          <!-- Header -->
-          <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
-            <div>
-              <h3 id="accProfileName" style="margin:0 0 4px 0;font-size:20px;"></h3>
-              <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--text-muted);">
-                <span id="accProfilePhone" dir="ltr"></span>
+        <!-- Profile Header -->
+        <div class="profile-header">
+          <div class="profile-header-top">
+            <button class="profile-back-btn" onclick="backToMerchantList()">← العودة</button>
+            <div class="profile-header-info">
+              <h3 id="accProfileName" class="profile-name"></h3>
+              <div class="profile-header-meta">
+                <span id="accProfilePhone" class="profile-phone" dir="ltr"></span>
                 <span id="accProfileStatus" class="status-badge"></span>
+                <span id="accProfileFirebaseStatus" class="profile-fb-status"></span>
+                <span id="accProfileLastActivity" class="profile-last-activity"></span>
               </div>
             </div>
-            <div id="accProfileActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+            <button class="profile-edit-btn" id="profileEditBtn" onclick="openMerchantModal(currentMerchantProfileId)" style="display:none;">✏️ تعديل</button>
           </div>
-          <!-- Quick Stats -->
-          <div id="accProfileStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px;"></div>
-          <!-- Inner Tabs -->
-          <div style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:16px;">
-            <button class="btn btn-sm profile-tab-btn active" data-tab="transactions" onclick="switchProfileTab('transactions')" style="background:none;border:none;padding:8px 16px;cursor:pointer;font-weight:600;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-2px;">المعاملات</button>
-            <button class="btn btn-sm profile-tab-btn" data-tab="inventory" onclick="switchProfileTab('inventory')" style="background:none;border:none;padding:8px 16px;cursor:pointer;font-weight:600;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-2px;">العهدة</button>
-            <button class="btn btn-sm profile-tab-btn" data-tab="installations" onclick="switchProfileTab('installations')" style="background:none;border:none;padding:8px 16px;cursor:pointer;font-weight:600;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-2px;">التركيبات</button>
-          </div>
-          <!-- Tab Content -->
-          <div id="accProfileTabContent"></div>
         </div>
+
+        <div id="profileBody">
+          <!-- Summary Cards -->
+          <div id="profileSummaryCards" class="profile-summary-row"></div>
+
+          <!-- Card Prices -->
+          <div class="profile-section">
+            <div class="profile-section-title">أسعار الفئات</div>
+            <div id="profileCardPrices" class="profile-prices-row"></div>
+          </div>
+
+          <!-- Accounting Table -->
+          <div class="profile-section">
+            <div class="profile-section-title">كشف المحاسبة</div>
+            <div class="profile-table-wrap">
+              <table class="profile-table">
+                <thead>
+                  <tr>
+                    <th>الفئة</th>
+                    <th>العهدة</th>
+                    <th>المباع</th>
+                    <th>المتبقي</th>
+                    <th>سعر التاجر</th>
+                    <th>الناتج</th>
+                  </tr>
+                </thead>
+                <tbody id="profileAccountingBody"></tbody>
+                <tfoot id="profileAccountingTotals"></tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Settlement Section -->
+          <div class="profile-section">
+            <div class="profile-section-title">التسوية</div>
+            <div id="profileSettlementBody"></div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div id="profileActions" class="profile-actions-bar"></div>
       </div>
     </section>
 
@@ -1125,5 +1158,6 @@
   <script src="modules/installations.js"></script>
   <script src="modules/reports.js"></script>
   <script src="modules/accounts.js"></script>
+  <script src="modules/merchantProfile.js"></script>
 </body>
 </html>

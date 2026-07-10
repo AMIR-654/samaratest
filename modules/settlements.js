@@ -160,11 +160,12 @@ async function saveSettlement(e) {
         updatedAt: now,
       });
 
-      // Update merchant totals
+      // Update merchant totals + currentBalance
       transaction.update(merchantRef, {
         totalCards: newTotalCards,
         totalCardValue: newTotalValue,
         totalSettlements: firebase.firestore.FieldValue.increment(grandTotal),
+        currentBalance: firebase.firestore.FieldValue.increment(-grandTotal),
         updatedAt: now,
       });
 

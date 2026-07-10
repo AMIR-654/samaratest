@@ -110,6 +110,7 @@ async function saveInstallation(e) {
       const merchantRef = db.collection("merchants").doc(merchantId);
       transaction.update(merchantRef, {
         installationCount: firebase.firestore.FieldValue.increment(1),
+        currentBalance: firebase.firestore.FieldValue.increment(price),
         updatedAt: now,
       });
 
@@ -154,7 +155,28 @@ async function saveInstallation(e) {
 async function deleteInstallation(id) {
   if (!confirm("هل تريد حذف هذا التركيب؟")) return;
   try {
-    await db.collection("merchant_installations").doc(id).delete();
+    const instDoc = await db.collection("merchant_installations").doc(id).get();
+    if (!instDoc.exists) {
+      alert("التركيب غير موجود");
+      return;
+    }
+    const instData = instDoc.data();
+    const merchantId = instData.merchantId;
+    const price = instData.price || 0;
+
+    await db.runTransaction(async (transaction) => {
+      transaction.delete(instDoc.ref);
+      if (merchantId) {
+        transaction.update(
+          db.collection("merchants").doc(merchantId),
+          {
+            installationCount: firebase.firestore.FieldValue.increment(-1),
+            currentBalance: firebase.firestore.FieldValue.increment(-price),
+          },
+        );
+      }
+    });
+
     await recordAudit("delete", "merchant_installations", id, null, null, "حذف تركيب");
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();

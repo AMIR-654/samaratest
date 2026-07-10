@@ -150,10 +150,11 @@ async function saveInventory(e) {
         });
       }
 
-      // Update merchant totals
+      // Update merchant totals + currentBalance
       transaction.update(merchantRef, {
         totalCards: newTotalCards,
         totalCardValue: newTotalValue,
+        currentBalance: firebase.firestore.FieldValue.increment(totalValue),
         updatedAt: now,
       });
 
