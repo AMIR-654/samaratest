@@ -87,17 +87,19 @@ function filterMerchants(value) {
 }
 
 async function openMerchantModal(merchant) {
-  $("merchantModalTitle").textContent = merchant ? "تعديل تاجر" : "إضافة تاجر";
-  $("merchantId").value = merchant ? merchant.id : "";
-  $("merchantName").value = merchant ? merchant.name : "";
-  $("merchantPhone").value = merchant ? merchant.phone : "";
-  $("merchantUsername").value = merchant ? merchant.username : "";
+  // Support both object and string ID
+  const m = typeof merchant === "string" ? merchantsCache.find((x) => x.id === merchant) : merchant;
+  $("merchantModalTitle").textContent = m ? "تعديل تاجر" : "إضافة تاجر";
+  $("merchantId").value = m ? m.id : "";
+  $("merchantName").value = m ? m.name : "";
+  $("merchantPhone").value = m ? m.phone : "";
+  $("merchantUsername").value = m ? m.username : "";
   $("merchantPassword").value = "";
-  $("merchantAddress").value = merchant ? merchant.address || "" : "";
-  $("merchantNotes").value = merchant ? merchant.notes || "" : "";
-  $("merchantSupportsInstallations").checked = merchant ? merchant.supportsInstallations ?? false : false;
-  $("merchantStatus").value = merchant ? merchant.status || "active" : "active";
-  $("merchantPassword").required = !merchant;
+  $("merchantAddress").value = m ? m.address || "" : "";
+  $("merchantNotes").value = m ? m.notes || "" : "";
+  $("merchantSupportsInstallations").checked = m ? m.supportsInstallations ?? false : false;
+  $("merchantStatus").value = m ? m.status || "active" : "active";
+  $("merchantPassword").required = !m;
   $("merchantModal").classList.add("open");
 }
 
@@ -105,43 +107,22 @@ async function saveMerchant(e) {
   e.preventDefault();
   const id = $("merchantId").value.trim();
 
-  // ---- Data Validation ----
   const name = $("merchantName").value.trim();
-  if (!name) {
-    alert("اسم التاجر مطلوب");
-    return;
-  }
+  if (!name) { showToast("اسم التاجر مطلوب", "warning"); return; }
 
   const phone = $("merchantPhone").value.trim();
-  if (!phone) {
-    alert("رقم الهاتف مطلوب");
-    return;
-  }
-  if (!/^01[0-9]{9}$/.test(phone)) {
-    alert("رقم الهاتف غير صحيح. يجب أن يكون 11 رقماً يبدأ بـ 01 (مثال: 01234567890)");
-    return;
-  }
+  if (!phone) { showToast("رقم الهاتف مطلوب", "warning"); return; }
+  if (!/^01[0-9]{9}$/.test(phone)) { showToast("رقم الهاتف غير صحيح. يجب أن يكون 11 رقماً يبدأ بـ 01", "warning"); return; }
 
   const username = $("merchantUsername").value.trim();
-  if (!username) {
-    alert("اسم المستخدم مطلوب");
-    return;
-  }
-  if (username.length < 3) {
-    alert("اسم المستخدم يجب أن يكون 3 أحرف على الأقل");
-    return;
-  }
+  if (!username) { showToast("اسم المستخدم مطلوب", "warning"); return; }
+  if (username.length < 3) { showToast("اسم المستخدم يجب أن يكون 3 أحرف على الأقل", "warning"); return; }
 
   const password = $("merchantPassword").value.trim();
-  if (!id && !password) {
-    alert("كلمة المرور مطلوبة للتاجر الجديد");
-    return;
-  }
+  if (!id && !password) { showToast("كلمة المرور مطلوبة للتاجر الجديد", "warning"); return; }
 
   const data = {
-    name,
-    phone,
-    username,
+    name, phone, username,
     address: $("merchantAddress").value.trim(),
     notes: $("merchantNotes").value.trim(),
     supportsInstallations: $("merchantSupportsInstallations").checked,
@@ -150,18 +131,13 @@ async function saveMerchant(e) {
   };
 
   try {
-    // ---- Username uniqueness check ----
     const existingSnap = await db.collection("merchants")
       .where("username", "==", username)
       .get();
     const isDuplicate = existingSnap.docs.some((d) => d.id !== id);
-    if (isDuplicate) {
-      alert("اسم المستخدم موجود بالفعل، يرجى اختيار اسم آخر");
-      return;
-    }
+    if (isDuplicate) { showToast("اسم المستخدم موجود بالفعل، يرجى اختيار اسم آخر", "warning"); return; }
 
     if (id) {
-      // ---- Update with full audit (atomic) ----
       if (password) data.password = password;
       data.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
       const date = new Date().toISOString().split("T")[0];
@@ -171,54 +147,27 @@ async function saveMerchant(e) {
         const merchantRef = db.collection("merchants").doc(id);
         const oldDoc = await transaction.get(merchantRef);
         if (!oldDoc.exists) throw new Error("التاجر غير موجود");
-
         const oldData = oldDoc.data();
         transaction.update(merchantRef, data);
-
         const auditRef = db.collection("merchant_audit_logs").doc();
         transaction.set(auditRef, {
-          action: "update",
-          collection: "merchants",
-          docId: id,
-          oldValue: {
-            name: oldData.name,
-            phone: oldData.phone,
-            username: oldData.username,
-            status: oldData.status,
-            address: oldData.address,
-            notes: oldData.notes,
-            supportsInstallations: oldData.supportsInstallations,
-          },
-          newValue: {
-            name: data.name,
-            phone: data.phone,
-            username: data.username,
-            status: data.status,
-            address: data.address,
-            notes: data.notes,
-            supportsInstallations: data.supportsInstallations,
-          },
-          performedBy: "admin",
-          reason: "تحديث بيانات التاجر",
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          date,
-          time,
+          action: "update", collection: "merchants", docId: id,
+          oldValue: { name: oldData.name, phone: oldData.phone, username: oldData.username, status: oldData.status, address: oldData.address, notes: oldData.notes, supportsInstallations: oldData.supportsInstallations },
+          newValue: { name: data.name, phone: data.phone, username: data.username, status: data.status, address: data.address, notes: data.notes, supportsInstallations: data.supportsInstallations },
+          performedBy: "admin", reason: "تحديث بيانات التاجر",
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(), date, time,
         });
       });
+      showToast("✅ تم تحديث التاجر بنجاح", "success");
     } else {
-      // ---- Create ----
       data.password = password;
       data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-      data.totalCards = 0;
-      data.totalCardValue = 0;
-      data.totalSettlements = 0;
-      data.totalCollections = 0;
-      data.currentBalance = 0;
-      data.installationCount = 0;
+      data.totalCards = 0; data.totalCardValue = 0; data.totalSettlements = 0;
+      data.totalCollections = 0; data.currentBalance = 0; data.installationCount = 0;
       data.createdBy = "admin";
-
       const ref = await db.collection("merchants").add(data);
       await recordAudit("create", "merchants", ref.id, null, data, "إضافة تاجر جديد");
+      showToast("✅ تم إضافة التاجر بنجاح", "success");
     }
     $("merchantModal").classList.remove("open");
     await loadMerchants();
@@ -226,7 +175,7 @@ async function saveMerchant(e) {
     if (typeof refreshAccountsUI === "function") await refreshAccountsUI();
     if (id && typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
   } catch (err) {
-    alert("خطأ: " + err.message);
+    showToast("خطأ: " + err.message, "error");
   }
 }
 
@@ -242,8 +191,9 @@ async function toggleMerchantStatus(id) {
     await recordAudit("update", "merchants", id, { status: m.status }, { status: newStatus },
       newStatus === "active" ? "تفعيل التاجر" : "إيقاف التاجر");
     await loadMerchants();
+    showToast(newStatus === "active" ? "✅ تم تفعيل التاجر" : "✅ تم إيقاف التاجر", "success");
   } catch (err) {
-    alert("خطأ: " + err.message);
+    showToast("خطأ: " + err.message, "error");
   }
 }
 
@@ -258,8 +208,9 @@ async function archiveMerchant(id) {
     });
     await recordAudit("archive", "merchants", id, { status: m.status }, { status: "archived" }, "أرشفة التاجر");
     await loadMerchants();
+    showToast(`✅ تم أرشفة "${m.name}" بنجاح`, "success");
   } catch (err) {
-    alert("خطأ: " + err.message);
+    showToast("خطأ: " + err.message, "error");
   }
 }
 

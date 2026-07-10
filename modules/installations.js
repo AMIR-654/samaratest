@@ -34,42 +34,24 @@ async function saveInstallation(e) {
   const merchantId = $("instMerchantId").value;
   if (!merchantId) return;
 
-  // ---- Data Validation ----
   const customerName = $("instCustomerName").value.trim();
-  if (!customerName) {
-    alert("اسم العميل مطلوب");
-    return;
-  }
+  if (!customerName) { showToast("اسم العميل مطلوب", "warning"); return; }
 
   const customerPhone = $("instCustomerPhone").value.trim();
-  if (customerPhone && !/^01[0-9]{9}$/.test(customerPhone)) {
-    alert("رقم هاتف العميل غير صحيح. يجب أن يكون 11 رقماً يبدأ بـ 01");
-    return;
-  }
+  if (customerPhone && !/^01[0-9]{9}$/.test(customerPhone)) { showToast("رقم هاتف العميل غير صحيح", "warning"); return; }
 
   const price = parseFloat($("instPrice").value) || 0;
-  if (price < 0) {
-    alert("السعر لا يمكن أن يكون سالباً");
-    return;
-  }
+  if (price < 0) { showToast("السعر لا يمكن أن يكون سالباً", "warning"); return; }
 
   const date = $("instDate").value;
-  if (!date) {
-    alert("التاريخ مطلوب");
-    return;
-  }
+  if (!date) { showToast("التاريخ مطلوب", "warning"); return; }
 
   const data = {
-    merchantId,
-    customerName,
-    customerPhone,
+    merchantId, customerName, customerPhone,
     region: $("instRegion").value.trim(),
     subscriptionType: $("instSubscriptionType").value.trim(),
-    price,
-    notes: $("instNotes").value.trim(),
-    date,
-    status: $("instStatus").value,
-    createdBy: "admin",
+    price, notes: $("instNotes").value.trim(), date,
+    status: $("instStatus").value, createdBy: "admin",
   };
 
   try {
@@ -78,33 +60,15 @@ async function saveInstallation(e) {
     const instRef = db.collection("merchant_installations").doc();
     const instId = instRef.id;
 
-    // ---- Atomic Transaction ----
     await db.runTransaction(async (transaction) => {
-      transaction.set(instRef, {
-        ...data,
-        createdAt: now,
-        updatedAt: now,
-      });
+      transaction.set(instRef, { ...data, createdAt: now, updatedAt: now });
 
-      const txnRef = db.collection("merchant_transactions").doc(merchantId)
-        .collection("items").doc();
+      const txnRef = db.collection("merchant_transactions").doc(merchantId).collection("items").doc();
       transaction.set(txnRef, {
-        type: "installation",
-        merchantId,
-        amount: price,
-        date,
-        time,
-        createdBy: "admin",
+        type: "installation", merchantId, amount: price, date, time, createdBy: "admin",
         notes: `تركيب: ${customerName} - ${data.region || "بدون منطقة"}${data.subscriptionType ? " (" + data.subscriptionType + ")" : ""}`,
-        priceSnapshot: [],
-        metadata: {
-          installationId: instId,
-          customerName,
-          region: data.region,
-          subscriptionType: data.subscriptionType,
-        },
-        createdAt: now,
-        updatedAt: now,
+        priceSnapshot: [], metadata: { installationId: instId, customerName, region: data.region, subscriptionType: data.subscriptionType },
+        createdAt: now, updatedAt: now,
       });
 
       const merchantRef = db.collection("merchants").doc(merchantId);
@@ -116,26 +80,16 @@ async function saveInstallation(e) {
 
       const auditRef = db.collection("merchant_audit_logs").doc();
       transaction.set(auditRef, {
-        action: "create",
-        collection: "merchant_installations",
-        docId: instId,
-        oldValue: null,
-        newValue: data,
-        performedBy: "admin",
-        reason: "إضافة تركيب",
-        timestamp: now,
-        date,
-        time,
+        action: "create", collection: "merchant_installations", docId: instId,
+        oldValue: null, newValue: data,
+        performedBy: "admin", reason: "إضافة تركيب", timestamp: now, date, time,
       });
 
       const notifRef = db.collection("merchant_notifications").doc();
       transaction.set(notifRef, {
-        merchantId,
-        type: "installation",
-        title: "تركيب جديد",
+        merchantId, type: "installation", title: "تركيب جديد",
         message: `تم إضافة تركيب ${customerName ? "لـ " + customerName : ""} بقيمة ${price.toLocaleString("ar-SA")} ج.م`,
-        read: false,
-        createdAt: now,
+        read: false, createdAt: now,
       });
     });
 
@@ -146,9 +100,9 @@ async function saveInstallation(e) {
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId === merchantId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
     }
-    showSuccess("تم إضافة التركيب بنجاح");
+    showToast("✅ تم إضافة التركيب بنجاح", "success");
   } catch (err) {
-    alert("خطأ في إضافة التركيب: " + err.message);
+    showToast("خطأ في إضافة التركيب: " + err.message, "error");
   }
 }
 
@@ -156,10 +110,7 @@ async function deleteInstallation(id) {
   if (!confirm("هل تريد حذف هذا التركيب؟")) return;
   try {
     const instDoc = await db.collection("merchant_installations").doc(id).get();
-    if (!instDoc.exists) {
-      alert("التركيب غير موجود");
-      return;
-    }
+    if (!instDoc.exists) { showToast("التركيب غير موجود", "warning"); return; }
     const instData = instDoc.data();
     const merchantId = instData.merchantId;
     const price = instData.price || 0;
@@ -167,13 +118,10 @@ async function deleteInstallation(id) {
     await db.runTransaction(async (transaction) => {
       transaction.delete(instDoc.ref);
       if (merchantId) {
-        transaction.update(
-          db.collection("merchants").doc(merchantId),
-          {
-            installationCount: firebase.firestore.FieldValue.increment(-1),
-            currentBalance: firebase.firestore.FieldValue.increment(-price),
-          },
-        );
+        transaction.update(db.collection("merchants").doc(merchantId), {
+          installationCount: firebase.firestore.FieldValue.increment(-1),
+          currentBalance: firebase.firestore.FieldValue.increment(-price),
+        });
       }
     });
 
@@ -181,9 +129,9 @@ async function deleteInstallation(id) {
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
     }
-    showSuccess("تم حذف التركيب");
+    showToast("✅ تم حذف التركيب", "success");
   } catch (err) {
-    alert("خطأ في الحذف: " + err.message);
+    showToast("خطأ في الحذف: " + err.message, "error");
   }
 }
 

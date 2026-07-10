@@ -70,36 +70,22 @@ async function saveSettlement(e) {
   const merchantId = $("settleMerchantId").value;
   if (!merchantId) return;
 
-  // ---- Data Validation ----
   const entries = [];
   let grandTotal = 0;
 
   document.querySelectorAll(".settle-count").forEach((input) => {
     const count = parseInt(input.value) || 0;
     const price = parseFloat(input.dataset.price) || 0;
-    if (count < 0) {
-      alert("عدد الكروت لا يمكن أن يكون سالباً");
-      return;
-    }
+    if (count < 0) { showToast("عدد الكروت لا يمكن أن يكون سالباً", "warning"); return; }
     if (count <= 0) return;
-    if (!input.dataset.category) {
-      alert("فئة الكرت غير محددة");
-      return;
-    }
+    if (!input.dataset.category) { showToast("فئة الكرت غير محددة", "warning"); return; }
     const total = count * price;
     grandTotal += total;
     entries.push({ category: input.dataset.category, count, price, total });
   });
 
-  if (!entries.length) {
-    alert("يرجى إدخال عدد الكروت المطلوب حسابها");
-    return;
-  }
-
-  if (grandTotal <= 0) {
-    alert("القيمة الإجمالية يجب أن تكون أكبر من صفر");
-    return;
-  }
+  if (!entries.length) { showToast("يرجى إدخال عدد الكروت المطلوب حسابها", "warning"); return; }
+  if (grandTotal <= 0) { showToast("القيمة الإجمالية يجب أن تكون أكبر من صفر", "warning"); return; }
 
   if (!confirm(`تأكيد حساب الكروت بقيمة ${grandTotal.toLocaleString("ar-SA")} ج.م؟`)) return;
 
@@ -108,31 +94,22 @@ async function saveSettlement(e) {
     const date = new Date().toISOString().split("T")[0];
     const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
 
-    // ---- Atomic Transaction with Inventory Validation ----
     await db.runTransaction(async (transaction) => {
       const invRef = db.collection("merchant_inventory").doc(merchantId);
       const merchantRef = db.collection("merchants").doc(merchantId);
 
       const invDoc = await transaction.get(invRef);
-      if (!invDoc.exists) {
-        throw new Error("لا توجد عهدة كافية لهذا التاجر");
-      }
+      if (!invDoc.exists) throw new Error("لا توجد عهدة كافية لهذا التاجر");
 
       const invData = invDoc.data();
       const currentEntries = invData.entries || [];
 
-      // Validate each category has enough inventory
       entries.forEach((e) => {
         const invEntry = currentEntries.find((i) => i.category === e.category);
         const available = invEntry ? invEntry.count : 0;
-        if (available < e.count) {
-          throw new Error(
-            `المخزون غير كافٍ لفئة "${e.category}". المتوفر: ${available}، المطلوب: ${e.count}`
-          );
-        }
+        if (available < e.count) throw new Error(`المخزون غير كافٍ لفئة "${e.category}". المتوفر: ${available}، المطلوب: ${e.count}`);
       });
 
-      // Deduct from inventory
       const mergedMap = {};
       const oldMap = {};
       currentEntries.forEach((e) => {
@@ -143,77 +120,42 @@ async function saveSettlement(e) {
         mergedMap[e.category] = Math.max(0, (mergedMap[e.category] || 0) - e.count);
       });
 
-      const newEntries = Object.entries(mergedMap)
-        .filter(([, count]) => count > 0)
-        .map(([category, count]) => ({ category, count }));
+      const newEntries = Object.entries(mergedMap).filter(([, count]) => count > 0).map(([category, count]) => ({ category, count }));
       const newTotalCards = newEntries.reduce((s, e) => s + e.count, 0);
       const newTotalValue = newEntries.reduce((s, e) => {
         const price = inventoryCardPrices.find((p) => p.category === e.category)?.merchantPrice || 0;
         return s + e.count * price;
       }, 0);
 
-      // Write inventory update
-      transaction.update(invRef, {
-        entries: newEntries,
-        totalCards: newTotalCards,
-        totalValue: newTotalValue,
-        updatedAt: now,
-      });
+      transaction.update(invRef, { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, updatedAt: now });
 
-      // Update merchant totals + currentBalance
       transaction.update(merchantRef, {
-        totalCards: newTotalCards,
-        totalCardValue: newTotalValue,
+        totalCards: newTotalCards, totalCardValue: newTotalValue,
         totalSettlements: firebase.firestore.FieldValue.increment(grandTotal),
         currentBalance: firebase.firestore.FieldValue.increment(-grandTotal),
         updatedAt: now,
       });
 
-      // Create transaction record
-      const txnRef = db.collection("merchant_transactions").doc(merchantId)
-        .collection("items").doc();
+      const txnRef = db.collection("merchant_transactions").doc(merchantId).collection("items").doc();
       transaction.set(txnRef, {
-        type: "card_settlement",
-        merchantId,
-        amount: -grandTotal,
-        date,
-        time,
-        createdBy: "admin",
+        type: "card_settlement", merchantId, amount: -grandTotal, date, time, createdBy: "admin",
         notes: `حساب كروت: ${entries.map((e) => `${e.count} من فئة ${e.category}`).join("، ")}`,
-        priceSnapshot: getPriceSnapshot(),
-        metadata: { entries, grandTotal },
-        createdAt: now,
-        updatedAt: now,
+        priceSnapshot: getPriceSnapshot(), metadata: { entries, grandTotal }, createdAt: now, updatedAt: now,
       });
 
-      // Audit log with full before/after
       const auditRef = db.collection("merchant_audit_logs").doc();
       transaction.set(auditRef, {
-        action: "create",
-        collection: "merchant_settlement",
-        docId: merchantId,
-        oldValue: {
-          entries: currentEntries,
-          totalCards: invData.totalCards,
-          totalValue: invData.totalValue,
-        },
+        action: "create", collection: "merchant_settlement", docId: merchantId,
+        oldValue: { entries: currentEntries, totalCards: invData.totalCards, totalValue: invData.totalValue },
         newValue: { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue },
-        performedBy: "admin",
-        reason: "حساب كروت",
-        timestamp: now,
-        date,
-        time,
+        performedBy: "admin", reason: "حساب كروت", timestamp: now, date, time,
       });
 
-      // Merchant notification
       const notifRef = db.collection("merchant_notifications").doc();
       transaction.set(notifRef, {
-        merchantId,
-        type: "settlement",
-        title: "حساب كروت",
+        merchantId, type: "settlement", title: "حساب كروت",
         message: `تم حساب كروت بقيمة ${grandTotal.toLocaleString("ar-SA")} ج.م`,
-        read: false,
-        createdAt: now,
+        read: false, createdAt: now,
       });
     });
 
@@ -224,9 +166,9 @@ async function saveSettlement(e) {
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId === merchantId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
     }
-    showSuccess("تم حساب الكروت بنجاح");
+    showToast("✅ تم حساب الكروت بنجاح", "success");
   } catch (err) {
-    alert("خطأ في حساب الكروت: " + err.message);
+    showToast("خطأ في حساب الكروت: " + err.message, "error");
   }
 }
 

@@ -68,46 +68,30 @@ async function saveInventory(e) {
   const merchantId = $("invMerchantId").value;
   if (!merchantId) return;
 
-  // ---- Data Validation ----
   const entries = [];
   let formValid = true;
   document.querySelectorAll(".inv-count").forEach((input) => {
     const count = parseInt(input.value) || 0;
     if (count > 0) {
       const price = parseFloat(input.dataset.price) || 0;
-      if (count < 0) {
-        alert("عدد الكروت لا يمكن أن يكون سالباً");
-        formValid = false;
-        return;
-      }
-      if (!input.dataset.category) {
-        alert("فئة الكرت غير محددة");
-        formValid = false;
-        return;
-      }
+      if (count < 0) { showToast("عدد الكروت لا يمكن أن يكون سالباً", "warning"); formValid = false; return; }
+      if (!input.dataset.category) { showToast("فئة الكرت غير محددة", "warning"); formValid = false; return; }
       entries.push({ category: input.dataset.category, count, price });
     }
   });
   if (!formValid) return;
 
-  if (!entries.length) {
-    alert("يرجى إدخال عدد الكروت المطلوب إضافتها");
-    return;
-  }
+  if (!entries.length) { showToast("يرجى إدخال عدد الكروت المطلوب إضافتها", "warning"); return; }
 
   const totalCards = entries.reduce((s, e) => s + e.count, 0);
   const totalValue = entries.reduce((s, e) => s + e.count * e.price, 0);
-  if (totalCards <= 0) {
-    alert("يجب إضافة كرت واحد على الأقل");
-    return;
-  }
+  if (totalCards <= 0) { showToast("يجب إضافة كرت واحد على الأقل", "warning"); return; }
 
   try {
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const date = new Date().toISOString().split("T")[0];
     const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
 
-    // ---- Atomic Transaction ----
     await db.runTransaction(async (transaction) => {
       const invRef = db.collection("merchant_inventory").doc(merchantId);
       const merchantRef = db.collection("merchants").doc(merchantId);
@@ -115,7 +99,6 @@ async function saveInventory(e) {
       const invDoc = await transaction.get(invRef);
       const invData = invDoc.exists ? invDoc.data() : { entries: [] };
 
-      // Merge existing + new entries (cumulative)
       const mergedMap = {};
       (invData.entries || []).forEach((e) => {
         mergedMap[e.category] = (mergedMap[e.category] || 0) + (e.count || 0);
@@ -131,78 +114,38 @@ async function saveInventory(e) {
         return s + e.count * p;
       }, 0);
 
-      // Write inventory
       if (invDoc.exists) {
-        transaction.update(invRef, {
-          entries: newEntries,
-          totalCards: newTotalCards,
-          totalValue: newTotalValue,
-          updatedAt: now,
-        });
+        transaction.update(invRef, { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, updatedAt: now });
       } else {
-        transaction.set(invRef, {
-          merchantId,
-          entries: newEntries,
-          totalCards: newTotalCards,
-          totalValue: newTotalValue,
-          createdAt: now,
-          updatedAt: now,
-        });
+        transaction.set(invRef, { merchantId, entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, createdAt: now, updatedAt: now });
       }
 
-      // Update merchant totals + currentBalance
       transaction.update(merchantRef, {
-        totalCards: newTotalCards,
-        totalCardValue: newTotalValue,
+        totalCards: newTotalCards, totalCardValue: newTotalValue,
         currentBalance: firebase.firestore.FieldValue.increment(totalValue),
         updatedAt: now,
       });
 
-      // Create transaction record
-      const txnRef = db.collection("merchant_transactions").doc(merchantId)
-        .collection("items").doc();
+      const txnRef = db.collection("merchant_transactions").doc(merchantId).collection("items").doc();
       transaction.set(txnRef, {
-        type: "card_inventory_added",
-        merchantId,
-        amount: 0,
-        date,
-        time,
-        createdBy: "admin",
+        type: "card_inventory_added", merchantId, amount: 0, date, time, createdBy: "admin",
         notes: `إضافة عهدة: ${entries.map((e) => `${e.count} كارت فئة ${e.category}`).join("، ")}`,
-        priceSnapshot: getPriceSnapshot(),
-        metadata: { entries, totalCards, totalValue },
-        createdAt: now,
-        updatedAt: now,
+        priceSnapshot: getPriceSnapshot(), metadata: { entries, totalCards, totalValue }, createdAt: now, updatedAt: now,
       });
 
-      // Audit log with full before/after
       const auditRef = db.collection("merchant_audit_logs").doc();
       transaction.set(auditRef, {
-        action: "create",
-        collection: "merchant_inventory",
-        docId: merchantId,
-        oldValue: invDoc.exists ? {
-          entries: invData.entries,
-          totalCards: invData.totalCards,
-          totalValue: invData.totalValue,
-        } : null,
+        action: "create", collection: "merchant_inventory", docId: merchantId,
+        oldValue: invDoc.exists ? { entries: invData.entries, totalCards: invData.totalCards, totalValue: invData.totalValue } : null,
         newValue: { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue },
-        performedBy: "admin",
-        reason: "إضافة عهدة",
-        timestamp: now,
-        date,
-        time,
+        performedBy: "admin", reason: "إضافة عهدة", timestamp: now, date, time,
       });
 
-      // Merchant notification
       const notifRef = db.collection("merchant_notifications").doc();
       transaction.set(notifRef, {
-        merchantId,
-        type: "inventory_added",
-        title: "إضافة عهدة",
+        merchantId, type: "inventory_added", title: "إضافة عهدة",
         message: `تم إضافة ${totalCards} كرت بقيمة ${totalValue.toLocaleString("ar-SA")} ج.م`,
-        read: false,
-        createdAt: now,
+        read: false, createdAt: now,
       });
     });
 
@@ -213,18 +156,10 @@ async function saveInventory(e) {
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId === merchantId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
     }
-    showSuccess("تم إضافة العهدة بنجاح");
+    showToast("✅ تم إضافة العهدة بنجاح", "success");
   } catch (err) {
-    alert("خطأ في حفظ العهدة: " + err.message);
+    showToast("خطأ في حفظ العهدة: " + err.message, "error");
   }
-}
-
-function showSuccess(msg) {
-  const div = document.createElement("div");
-  div.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--success);color:white;padding:12px 24px;border-radius:8px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
-  div.textContent = msg;
-  document.body.appendChild(div);
-  setTimeout(() => div.remove(), 3000);
 }
 
 // ===== Card Price Management =====
@@ -291,24 +226,13 @@ async function saveCardPrices() {
     const merchantPrice = parseFloat(row.querySelector(".cp-price")?.value) || 0;
     const sortOrder = parseInt(row.querySelector(".cp-sort")?.value) || 0;
 
-    if (!category) {
-      alert("جميع فئات الأسعار يجب أن تحتوي على اسم");
-      hasErrors = true;
-      return;
-    }
-    if (merchantPrice < 0) {
-      alert("السعر لا يمكن أن يكون سالباً");
-      hasErrors = true;
-      return;
-    }
+    if (!category) { showToast("جميع فئات الأسعار يجب أن تحتوي على اسم", "warning"); hasErrors = true; return; }
+    if (merchantPrice < 0) { showToast("السعر لا يمكن أن يكون سالباً", "warning"); hasErrors = true; return; }
     prices.push({ category, merchantPrice, sortOrder });
   });
   if (hasErrors) return;
 
-  if (!prices.length) {
-    alert("يرجى إضافة فئة سعر واحدة على الأقل");
-    return;
-  }
+  if (!prices.length) { showToast("يرجى إضافة فئة سعر واحدة على الأقل", "warning"); return; }
 
   try {
     const snap = await db.collection("merchant_card_prices").get();
@@ -323,9 +247,9 @@ async function saveCardPrices() {
     await loadInventoryPrices();
     if (typeof markAccountsDirty === "function") markAccountsDirty();
     $("cardPriceModal").classList.remove("open");
-    showSuccess("تم حفظ أسعار الكروت بنجاح");
+    showToast("✅ تم حفظ أسعار الكروت بنجاح", "success");
   } catch (err) {
-    alert("خطأ في حفظ الأسعار: " + err.message);
+    showToast("خطأ في حفظ الأسعار: " + err.message, "error");
   }
 }
 

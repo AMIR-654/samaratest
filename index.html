@@ -657,56 +657,90 @@
 
     <!-- Accounts Tab -->
     <section id="tab-accounts" class="tab-content">
-      <div class="section-header">
-        <h2>نظام المحاسبة</h2>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="openMerchantModal()">+ إضافة تاجر</button>
-          <button class="btn btn-outline" onclick="openCardPriceModal()">⚙️ أسعار الكروت</button>
-        </div>
-      </div>
-
-      <!-- List View -->
-      <div id="accountsListContainer">
-        <!-- Dashboard -->
-        <div id="accountsDashboard"></div>
-        <!-- Merchants List -->
-        <div id="accountsMerchantList"></div>
-      </div>
-
-      <!-- Profile View (Redesigned) -->
-      <div id="accountsProfileContainer" style="display:none;">
-        <!-- Profile Header -->
-        <div class="profile-header">
-          <div class="profile-header-top">
-            <button class="profile-back-btn" onclick="backToMerchantList()">← العودة</button>
-            <div class="profile-header-info">
-              <h3 id="accProfileName" class="profile-name"></h3>
-              <div class="profile-header-meta">
-                <span id="accProfilePhone" class="profile-phone" dir="ltr"></span>
-                <span id="accProfileStatus" class="status-badge"></span>
-                <span id="accProfileFirebaseStatus" class="profile-fb-status"></span>
-                <span id="accProfileLastActivity" class="profile-last-activity"></span>
-              </div>
-            </div>
-            <button class="profile-edit-btn" id="profileEditBtn" onclick="openMerchantModal(currentMerchantProfileId)" style="display:none;">✏️ تعديل</button>
+      <!-- ============================================================
+           MERCHANT LIST VIEW
+           ============================================================ -->
+      <div id="merchantListView" style="display:block;">
+        <div class="section-header">
+          <h2>نظام المحاسبة</h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="openMerchantModal()">+ إضافة تاجر</button>
+            <button class="btn btn-outline" onclick="openCardPriceModal()">⚙️ أسعار الكروت</button>
           </div>
         </div>
 
-        <div id="profileBody">
-          <!-- Summary Cards -->
-          <div id="profileSummaryCards" class="profile-summary-row"></div>
+        <!-- Filter Bar -->
+        <div class="merchant-filter-bar" id="merchantFilterBar">
+          <div class="merchant-filter-row">
+            <input type="text" class="merchant-search-input" id="merchantSearchInput"
+              placeholder="🔍 بحث بالاسم، رقم الهاتف، اسم المستخدم، أو كود التاجر..."
+              oninput="filterMerchantCards()" />
+            <button class="btn btn-sm btn-outline" onclick="openMerchantModal()" style="flex-shrink:0;">
+              + إضافة تاجر
+            </button>
+          </div>
+          <div class="filter-chips" id="merchantFilterChips"></div>
+        </div>
 
-          <!-- Card Prices -->
-          <div class="profile-section">
-            <div class="profile-section-title">أسعار الفئات</div>
-            <div id="profileCardPrices" class="profile-prices-row"></div>
+        <!-- Stats Bar -->
+        <div class="stats-grid" id="merchantListStats" style="margin-bottom:16px;"></div>
+
+        <!-- Merchant Grid -->
+        <div id="merchantGrid" class="merchant-grid"></div>
+
+        <!-- Empty / Error states handled by JS -->
+      </div>
+
+      <!-- ============================================================
+           ACCOUNTING SCREEN VIEW
+           ============================================================ -->
+      <div id="accountingScreenView" style="display:none;">
+        <!-- Header -->
+        <div class="acct-header" id="acctHeader">
+          <div class="acct-header-top">
+            <button class="acct-back-btn" onclick="backToMerchantList()">→ العودة</button>
+            <div class="acct-avatar" id="acctAvatar">م</div>
+            <div class="acct-header-info">
+              <div class="acct-header-name">
+                <span id="acctName"></span>
+                <span id="acctStatusBadge" class="status-badge"></span>
+              </div>
+              <div class="acct-header-meta">
+                <span id="acctCode"></span>
+                <span id="acctPhone"></span>
+                <span id="acctFirebaseStatus"></span>
+                <span id="acctLastActivity"></span>
+              </div>
+            </div>
+            <div class="acct-header-right">
+              <div class="acct-date-range">
+                <input type="date" id="acctDateFrom" onchange="refreshAccountingScreen()" />
+                <input type="date" id="acctDateTo" onchange="refreshAccountingScreen()" />
+              </div>
+              <button class="acct-header-edit-btn" onclick="openMerchantModal(currentMerchantProfileId)">✏️ تعديل</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Body (skeleton / content) -->
+        <div id="acctBody">
+          <!-- Summary Dashboard -->
+          <div class="acct-summary" id="acctSummary"></div>
+
+          <!-- Price Strip -->
+          <div class="acct-price-strip" id="acctPriceStrip" style="display:none;">
+            <div class="acct-price-strip-title">أسعار الفئات</div>
+            <div class="acct-price-strip-scroll" id="acctPriceStripScroll"></div>
           </div>
 
           <!-- Accounting Table -->
-          <div class="profile-section">
-            <div class="profile-section-title">كشف المحاسبة</div>
-            <div class="profile-table-wrap">
-              <table class="profile-table">
+          <div class="acct-table-section" id="acctTableSection">
+            <div class="acct-table-header">
+              <span>كشف المحاسبة</span>
+              <span id="acctTableCount" style="font-size:11px;color:var(--text-muted);"></span>
+            </div>
+            <div class="acct-table-wrap">
+              <table class="acct-table">
                 <thead>
                   <tr>
                     <th>الفئة</th>
@@ -717,21 +751,68 @@
                     <th>الناتج</th>
                   </tr>
                 </thead>
-                <tbody id="profileAccountingBody"></tbody>
-                <tfoot id="profileAccountingTotals"></tfoot>
+                <tbody id="acctTableBody"></tbody>
+                <tfoot id="acctTableTotals"></tfoot>
               </table>
             </div>
           </div>
 
-          <!-- Settlement Section -->
-          <div class="profile-section">
-            <div class="profile-section-title">التسوية</div>
-            <div id="profileSettlementBody"></div>
+          <!-- Settlement Panel -->
+          <div class="acct-settlement" id="acctSettlement"></div>
+
+          <!-- Account Statement -->
+          <div class="acct-statement-section" id="acctStatementSection">
+            <div class="acct-statement-header">
+              <span class="acct-statement-title">كشف الحساب</span>
+              <div class="acct-statement-filters">
+                <select id="stmtFilterType" onchange="renderAcctStatement()">
+                  <option value="">جميع المعاملات</option>
+                  <option value="card_inventory_added">عهدة</option>
+                  <option value="card_settlement">حساب كروت</option>
+                  <option value="cash_collection">استلام نقدي</option>
+                  <option value="installation">تركيب</option>
+                </select>
+                <button class="btn btn-sm btn-outline" onclick="printAcctStatement()">🖨️ طباعة</button>
+              </div>
+            </div>
+            <div id="acctStatementTimeline" class="acct-statement-timeline"></div>
+          </div>
+
+          <!-- Installations Section -->
+          <div class="acct-installations-section" id="acctInstallationsSection">
+            <div class="acct-statement-header">
+              <span class="acct-statement-title">آخر التركيبات</span>
+              <button class="btn btn-sm btn-primary" onclick="openInstallationModal(currentMerchantProfileId)">+ إضافة تركيب</button>
+            </div>
+            <div id="acctInstallationsList"></div>
           </div>
         </div>
 
         <!-- Action Buttons -->
-        <div id="profileActions" class="profile-actions-bar"></div>
+        <div class="acct-actions" id="acctActions">
+          <button class="acct-action-btn acct-action-inv" onclick="openAddInventoryModal(currentMerchantProfileId)">
+            ➕ إضافة عهدة
+          </button>
+          <button class="acct-action-btn acct-action-settle" onclick="openSettlementModal(currentMerchantProfileId)">
+            🧮 حساب الكروت
+          </button>
+          <button class="acct-action-btn acct-action-collect" onclick="document.getElementById('settlementReceiveInput')?.focus()">
+            💾 حفظ التسوية
+          </button>
+          <div class="acct-action-more-wrap">
+            <button class="acct-action-btn acct-action-more" onclick="toggleAcctMoreMenu()">
+              ⋮
+            </button>
+            <div class="acct-action-more-menu" id="acctMoreMenu">
+              <button onclick="openStatementModal(currentMerchantProfileId)">📊 كشف الحساب الكامل</button>
+              <button onclick="openInstallationModal(currentMerchantProfileId)">🔧 إضافة تركيب</button>
+              <button onclick="openCardPriceModal()">⚙️ أسعار الكروت</button>
+              <button onclick="openMerchantModal(currentMerchantProfileId)">✏️ تعديل التاجر</button>
+              <button onclick="showAcctAuditLog()">📋 سجل العمليات</button>
+              <button onclick="toggleMerchantArchive()" style="color:var(--danger);">📦 أرشفة التاجر</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1144,6 +1225,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
 
   <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore-compat.js"></script>

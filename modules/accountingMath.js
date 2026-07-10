@@ -1,4 +1,10 @@
 // ===== Shared Accounting Math (Admin Version) =====
+// ===== Official Formulas (Part 4 Spec) =====
+// currentBalance = remainingCardValue + totalInstallations - totalCollections
+// remainingCards = inventoryCards - soldCards
+// salesValue = soldCards * merchantPrice
+// remainingValue = remainingCards * merchantPrice
+// inventoryValue = inventoryCards * merchantPrice
 var AccountingMath = {
   /**
    * Calculates the expected merchant balance:
@@ -6,6 +12,34 @@ var AccountingMath = {
    */
   calculateBalance: function(remainingCardValue, totalInstallations, totalCollections) {
     return remainingCardValue + totalInstallations - totalCollections;
+  },
+
+  /**
+   * remainingCards = inventoryCards - soldCards
+   */
+  calculateRemainingCards: function(inventoryCards, soldCards) {
+    return Math.max(0, inventoryCards - soldCards);
+  },
+
+  /**
+   * salesValue = soldCards * merchantPrice
+   */
+  calculateSalesValue: function(soldCards, merchantPrice) {
+    return soldCards * merchantPrice;
+  },
+
+  /**
+   * remainingValue = remainingCards * merchantPrice
+   */
+  calculateRemainingValue: function(remainingCards, merchantPrice) {
+    return remainingCards * merchantPrice;
+  },
+
+  /**
+   * inventoryValue = inventoryCards * merchantPrice
+   */
+  calculateInventoryTotal: function(inventoryCards, merchantPrice) {
+    return inventoryCards * merchantPrice;
   },
 
   /**

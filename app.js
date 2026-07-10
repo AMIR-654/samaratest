@@ -71,6 +71,11 @@ let gatewaysCache = [];
 
 const $ = (id) => document.getElementById(id);
 const categoriesBody = $("categoriesBody");
+
+// Toast stub — replaced by accounts.js with full implementation
+window.showToast = function(msg, type) {
+  console.log("[Toast " + (type || "info") + "]", msg);
+};
 const globalButtonsBody = $("globalButtonsBody");
 
 // ===== Firebase Status =====

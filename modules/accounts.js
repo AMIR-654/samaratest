@@ -1,14 +1,28 @@
-// ===== Accounts Module (Orchestrator) =====
+// ===== Accounts Module (Orchestrator) — New ERP Design =====
 
 let currentMerchantProfileId = null;
-let currentProfileTab = "transactions";
 let _accountsData = null;
 let _accountsDataDirty = true;
 let _pricesLoaded = false;
+let _currentFilter = "all";
+let _searchTerm = "";
+
+const FILTER_OPTIONS = [
+  { id: "all", label: "الكل" },
+  { id: "active", label: "نشط" },
+  { id: "inactive", label: "غير نشط" },
+  { id: "archived", label: "مؤرشف" },
+  { id: "has_balance", label: "لديه رصيد" },
+  { id: "zero_balance", label: "رصيد صفري" },
+  { id: "has_inventory", label: "لديه عهدة" },
+  { id: "supports_installations", label: "يدعم التركيبات" },
+];
 
 function markAccountsDirty() {
   _accountsDataDirty = true;
 }
+
+function $(id) { return document.getElementById(id); }
 
 async function _ensureAccountsData() {
   if (!_pricesLoaded) {
@@ -31,276 +45,265 @@ function initAccounts() {
   return _ensureAccountsData();
 }
 
-// ===================== Dashboard =====================
+function getFilteredMerchants() {
+  let data = _accountsData || [];
+  const term = _searchTerm.toLowerCase().trim();
+
+  if (term) {
+    data = data.filter((m) =>
+      (m.name || "").toLowerCase().includes(term) ||
+      (m.phone || "").includes(term) ||
+      (m.username || "").toLowerCase().includes(term) ||
+      (m.id || "").toLowerCase().includes(term)
+    );
+  }
+
+  switch (_currentFilter) {
+    case "active":
+      data = data.filter((m) => m.status === "active");
+      break;
+    case "inactive":
+      data = data.filter((m) => m.status === "inactive");
+      break;
+    case "archived":
+      data = data.filter((m) => m.status === "archived");
+      break;
+    case "has_balance":
+      data = data.filter((m) => (m.currentBalance || 0) > 0);
+      break;
+    case "zero_balance":
+      data = data.filter((m) => !m.currentBalance || m.currentBalance === 0);
+      break;
+    case "has_inventory":
+      data = data.filter((m) => (m.totalCards || 0) > 0);
+      break;
+    case "supports_installations":
+      data = data.filter((m) => m.supportsInstallations === true);
+      break;
+  }
+
+  return data;
+}
+
+function renderFilterChips() {
+  const container = $("merchantFilterChips");
+  if (!container) return;
+  container.innerHTML = FILTER_OPTIONS.map((f) =>
+    `<button class="filter-chip${_currentFilter === f.id ? " active" : ""}" onclick="setMerchantFilter('${f.id}')">${f.label}</button>`
+  ).join("");
+}
+
+function setMerchantFilter(filterId) {
+  _currentFilter = filterId;
+  renderFilterChips();
+  renderMerchantCards();
+}
+
+function filterMerchantCards() {
+  _searchTerm = $("merchantSearchInput")?.value || "";
+  renderMerchantCards();
+}
+
+function renderMerchantCards() {
+  const grid = $("merchantGrid");
+  const stats = $("merchantListStats");
+  if (!grid) return;
+
+  const filtered = getFilteredMerchants();
+
+  // Stats bar
+  const total = _accountsData ? _accountsData.length : 0;
+  const active = _accountsData ? _accountsData.filter((m) => m.status === "active").length : 0;
+  const totalBal = _accountsData ? _accountsData.reduce((s, m) => s + (m.currentBalance || 0), 0) : 0;
+  if (stats) {
+    stats.innerHTML = `
+      <div class="stat-card"><span class="stat-num">${total}</span><span class="stat-label">إجمالي التجار</span></div>
+      <div class="stat-card"><span class="stat-num">${active}</span><span class="stat-label">نشط</span></div>
+      <div class="stat-card"><span class="stat-num">${filtered.length}</span><span class="stat-label">المعروض</span></div>
+      <div class="stat-card"><span class="stat-num">${totalBal.toLocaleString("ar-SA")}</span><span class="stat-label">إجمالي الرصيد</span></div>
+    `;
+  }
+
+  if (!filtered.length) {
+    const hasFilters = _currentFilter !== "all" || _searchTerm;
+    grid.innerHTML = hasFilters
+      ? `<div class="merchant-empty-state"><div class="merchant-empty-state-icon">🔍</div><div class="merchant-empty-state-text">لا توجد نتائج</div><div class="merchant-empty-state-hint">حاول تغيير معايير البحث أو الفلتر</div></div>`
+      : `<div class="merchant-empty-state"><div class="merchant-empty-state-icon">📦</div><div class="merchant-empty-state-text">لا يوجد تجار بعد</div><div class="merchant-empty-state-hint">قم بإضافة تاجر جديد للبدء</div><button class="btn btn-primary" onclick="openMerchantModal()">+ إضافة تاجر</button></div>`;
+    return;
+  }
+
+  grid.innerHTML = filtered.map((m) => renderMerchantCard(m)).join("");
+}
+
+function renderMerchantCard(m) {
+  const initial = (m.name || "?").charAt(0);
+  const statusLabel = m.status === "active" ? "نشط" : m.status === "inactive" ? "موقوف" : "مؤرشف";
+  const statusClass = m.status === "active" ? "active" : m.status === "inactive" ? "inactive" : "archived";
+  const fbOk = m.firebaseAuthUid && m.firebaseAuthStatus === "active";
+  const fbLabel = fbOk ? "Firebase مفعل" : m.firebaseAuthUid ? "يحتاج مزامنة" : "غير مفعل";
+  const fbClass = fbOk ? "firebase-ok" : m.firebaseAuthUid ? "firebase-pending" : "firebase-missing";
+  const balance = m.currentBalance || 0;
+  const balanceClass = balance > 0 ? "positive" : balance < 0 ? "negative" : "";
+  const lastAct = m.updatedAt
+    ? (m.updatedAt.toDate ? m.updatedAt.toDate() : new Date(m.updatedAt)).toLocaleString("ar-EG")
+    : "-";
+
+  return `
+    <div class="merchant-card" onclick="openMerchantProfile('${m.id}')">
+      <div class="merchant-card-top">
+        <div class="merchant-avatar">${initial}</div>
+        <div class="merchant-card-info">
+          <div class="merchant-card-name">
+            ${escapeHtml(m.name || "")}
+          </div>
+          <div class="merchant-card-code">#${m.id}</div>
+          <div class="merchant-card-phone" dir="ltr">${escapeHtml(m.phone || "")}</div>
+        </div>
+        <div class="merchant-card-badges">
+          <span class="merchant-card-badge ${statusClass}">${statusLabel}</span>
+          <span class="merchant-card-badge ${fbClass}" title="حالة Firebase Auth">${fbLabel}</span>
+        </div>
+      </div>
+      <div class="merchant-card-stats">
+        <div class="merchant-card-stat">
+          <div class="merchant-card-stat-value ${balanceClass}">${balance.toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">الرصيد</div>
+        </div>
+        <div class="merchant-card-stat">
+          <div class="merchant-card-stat-value">${(m.totalCards || 0).toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">الكروت</div>
+        </div>
+        <div class="merchant-card-stat">
+          <div class="merchant-card-stat-value">${(m.totalCardValue || 0).toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">قيمة العهدة</div>
+        </div>
+      </div>
+      <div class="merchant-card-last-activity">آخر نشاط: ${lastAct}</div>
+      <div class="merchant-card-actions" onclick="event.stopPropagation()">
+        <button class="merchant-card-action primary" onclick="openMerchantProfile('${m.id}')">فتح</button>
+        <button class="merchant-card-action" onclick="openMerchantModal('${m.id}')">تعديل</button>
+        <button class="merchant-card-action ${m.status === 'archived' ? '' : 'danger'}" onclick="toggleMerchantCardStatus('${m.id}')">
+          ${m.status === "archived" ? "إلغاء الأرشفة" : m.status === "active" ? "إيقاف" : "تفعيل"}
+        </button>
+        <div class="merchant-card-more">
+          <button class="merchant-card-action" onclick="toggleCardMoreMenu(event, '${m.id}')">•••</button>
+          <div class="merchant-card-more-menu" id="moreMenu_${m.id}">
+            <button onclick="openStatementModal('${m.id}')">📊 كشف الحساب</button>
+            <button onclick="openInstallationModal('${m.id}')">🔧 إضافة تركيب</button>
+            <button onclick="openSettlementModal('${m.id}')">🧮 حساب الكروت</button>
+            <button onclick="archiveMerchant('${m.id}')">📦 أرشفة</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleCardMoreMenu(event, merchantId) {
+  event.stopPropagation();
+  const menu = $(`moreMenu_${merchantId}`);
+  if (!menu) return;
+  const isOpen = menu.classList.contains("open");
+  document.querySelectorAll(".merchant-card-more-menu.open").forEach((el) => el.classList.remove("open"));
+  if (!isOpen) {
+    menu.classList.add("open");
+    const close = (e) => {
+      if (!e.target.closest(".merchant-card-more")) {
+        menu.classList.remove("open");
+        document.removeEventListener("click", close);
+      }
+    };
+    setTimeout(() => document.addEventListener("click", close), 0);
+  }
+}
+
+async function toggleMerchantCardStatus(id) {
+  const m = merchantsCache.find((x) => x.id === id);
+  if (!m) return;
+  const newStatus = m.status === "active" ? "inactive" : "active";
+  try {
+    await db.collection("merchants").doc(id).update({
+      status: newStatus,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    await recordAudit("update", "merchants", id, { status: m.status }, { status: newStatus },
+      newStatus === "active" ? "تفعيل التاجر" : "إيقاف التاجر");
+    await loadMerchants();
+    _accountsDataDirty = true;
+    renderMerchantCards();
+    showToast(newStatus === "active" ? "تم تفعيل التاجر بنجاح" : "تم إيقاف التاجر", "success");
+  } catch (err) {
+    showToast("خطأ: " + err.message, "error");
+  }
+}
 
 async function renderAccountsDashboard() {
   const container = $("accountsDashboard");
   if (!container) return;
-
-  container.innerHTML = '<div class="loading">جاري تحميل البيانات...</div>';
-
-  try {
-    const merchants = await _ensureAccountsData();
-
-    let totalCards = 0;
-    let totalCardValue = 0;
-    let totalSettlements = 0;
-    let totalInstallations = 0;
-    let activeCount = 0;
-    let inactiveCount = 0;
-
-    merchants.forEach((m) => {
-      totalCards += m.totalCards || 0;
-      totalCardValue += m.totalCardValue || 0;
-      totalSettlements += m.totalSettlements || 0;
-      totalInstallations += m.installationCount || 0;
-      if (m.status === "active") activeCount++;
-      else inactiveCount++;
-    });
-
-    container.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px;">
-        <div class="metric-card" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:20px;border-radius:12px;">
-          <div style="font-size:13px;opacity:0.9;">إجمالي التجار</div>
-          <div style="font-size:32px;font-weight:700;">${merchants.length}</div>
-          <div style="font-size:12px;margin-top:4px;opacity:0.8;">
-            <span style="color:#4ade80;">● ${activeCount} نشط</span> |
-            <span style="color:#fbbf24;">● ${inactiveCount} غير نشط</span>
-          </div>
-        </div>
-        <div class="metric-card" style="background:linear-gradient(135deg,#f093fb,#f5576c);color:white;padding:20px;border-radius:12px;">
-          <div style="font-size:13px;opacity:0.9;">إجمالي العهدة</div>
-          <div style="font-size:32px;font-weight:700;">${totalCardValue.toLocaleString("ar-SA")}</div>
-          <div style="font-size:12px;margin-top:4px;opacity:0.8;">${totalCards.toLocaleString("ar-SA")} كرت</div>
-        </div>
-        <div class="metric-card" style="background:linear-gradient(135deg,#4facfe,#00f2fe);color:white;padding:20px;border-radius:12px;">
-          <div style="font-size:13px;opacity:0.9;">إجمالي الحسابات</div>
-          <div style="font-size:32px;font-weight:700;">${totalSettlements.toLocaleString("ar-SA")}</div>
-          <div style="font-size:12px;margin-top:4px;opacity:0.8;">ج.م</div>
-        </div>
-        <div class="metric-card" style="background:linear-gradient(135deg,#43e97b,#38f9d7);color:white;padding:20px;border-radius:12px;">
-          <div style="font-size:13px;opacity:0.9;">التركيبات</div>
-          <div style="font-size:32px;font-weight:700;">${totalInstallations.toLocaleString("ar-SA")}</div>
-          <div style="font-size:12px;margin-top:4px;opacity:0.8;">تركيب</div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    container.innerHTML = `<p style="color:var(--danger);">خطأ: ${escapeHtml(err.message)}</p>`;
-  }
+  // Dashboard is now inline in merchantGrid stats; this is a no-op for back compat
 }
-
-// ===================== Merchant List =====================
 
 async function renderAccountsMerchantList() {
-  const container = $("accountsMerchantList");
-  if (!container) return;
-
-  container.innerHTML = '<div class="loading">جاري تحميل التجار...</div>';
-
-  try {
-    const merchants = await _ensureAccountsData();
-
-    if (!merchants.length) {
-      container.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:32px;">لا يوجد تجار بعد</p>';
-      return;
-    }
-
-    container.innerHTML = `
-      <div style="margin-bottom:16px;">
-        <input type="text" id="accMerchantSearch" class="search-input" placeholder="🔍 بحث بالاسم أو الهاتف..."
-          oninput="filterAccountsMerchantList()" style="width:100%;max-width:400px;" />
-      </div>
-      <div id="accMerchantGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;">
-        ${renderMerchantCards(merchants)}
-      </div>
-    `;
-  } catch (err) {
-    container.innerHTML = `<p style="color:var(--danger);">خطأ: ${escapeHtml(err.message)}</p>`;
-  }
+  await _ensureAccountsData();
+  renderFilterChips();
+  renderMerchantCards();
 }
 
-function getFirebaseStatusBadge(merchant) {
-  if (!merchant.firebaseAuthUid) {
-    return '<span style="color:#ef4444;font-size:12px;">🔴 غير مفعل</span>';
-  }
-  if (merchant.firebaseAuthStatus === "active") {
-    return '<span style="color:#22c55e;font-size:12px;" title="حساب Firebase Auth نشط">🟢 مفعل</span>';
-  }
-  return '<span style="color:#eab308;font-size:12px;" title="حساب Firebase Auth غير متوافق. يرجى إعادة المزامنة">🟡 يحتاج مزامنة</span>';
-}
-
-function renderMerchantCards(merchants) {
-  return merchants.map((m) => `
-    <div class="card" style="padding:16px;cursor:pointer;" onclick="openMerchantProfile('${m.id}')">
-      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
-        <div>
-          <div style="font-weight:700;font-size:15px;">${escapeHtml(m.name || "")}</div>
-          <div style="font-size:12px;color:var(--text-muted);" dir="ltr">${escapeHtml(m.phone || "")}</div>
-        </div>
-        <div style="text-align:left;">
-          <div><span class="status-badge ${m.status === "active" ? "active" : "disabled"}">${m.status === "active" ? "نشط" : "غير نشط"}</span></div>
-          <div style="margin-top:4px;">${getFirebaseStatusBadge(m)}</div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:12px;">
-        <div>
-          <span style="color:var(--text-muted);">العهدة:</span>
-          <span style="font-weight:600;">${(m.totalCardValue || 0).toLocaleString("ar-SA")} ج.م</span>
-        </div>
-        <div>
-          <span style="color:var(--text-muted);">الحسابات:</span>
-          <span style="font-weight:600;">${(m.totalSettlements || 0).toLocaleString("ar-SA")} ج.م</span>
-        </div>
-        <div>
-          <span style="color:var(--text-muted);">الكروت:</span>
-          <span style="font-weight:600;">${(m.totalCards || 0).toLocaleString("ar-SA")}</span>
-        </div>
-        <div>
-          <span style="color:var(--text-muted);">التركيبات:</span>
-          <span style="font-weight:600;">${(m.installationCount || 0)}</span>
-        </div>
-      </div>
-    </div>
-  `).join("");
-}
-
-function filterAccountsMerchantList() {
-  const q = ($("accMerchantSearch")?.value || "").trim().toLowerCase();
-  const grid = $("accMerchantGrid");
-  if (!grid) return;
-
-  const data = _accountsData || [];
-  const filtered = data.filter((m) =>
-    (m.name || "").toLowerCase().includes(q) ||
-    (m.phone || "").includes(q)
-  );
-
-  grid.innerHTML = filtered.length
-    ? renderMerchantCards(filtered)
-    : '<p style="text-align:center;color:var(--text-muted);padding:24px;">لا توجد نتائج</p>';
-}
-
-// ===================== Merchant Profile =====================
-
-async function refreshMerchantProfile() {
-  try {
-    const doc = await db.collection("merchants").doc(currentMerchantProfileId).get();
-    if (doc.exists) {
-      const idx = merchantsCache.findIndex((m) => m.id === currentMerchantProfileId);
-      if (idx !== -1) merchantsCache[idx] = { id: doc.id, ...doc.data() };
-      if (typeof openMerchantProfile === "function") {
-        await openMerchantProfile(currentMerchantProfileId);
-      }
-    }
-  } catch (err) {
-    console.warn("[Accounts] Refresh profile failed:", err.message);
-  }
-}
-
-// ===================== Refresh UI (in-place) =====================
-
-async function refreshAccountsUI() {
-  if ($("accountsListContainer")?.style.display !== "none") {
-    await renderAccountsDashboard();
-    await renderAccountsMerchantList();
-  }
-}
-
-// ===================== Tab Activation =====================
+// ===== Tab Activation =====
 
 async function onAccountsTabActivated(subTab) {
   await initAccounts();
 
   if (subTab === "profile" && currentMerchantProfileId) {
-    $("accountsListContainer").style.display = "none";
-    $("accountsProfileContainer").style.display = "block";
+    $("merchantListView").style.display = "none";
+    $("accountingScreenView").style.display = "block";
     if (typeof openMerchantProfile === "function") {
       await openMerchantProfile(currentMerchantProfileId);
     }
   } else {
-    $("accountsListContainer").style.display = "block";
-    $("accountsProfileContainer").style.display = "none";
-    await renderAccountsDashboard();
+    $("merchantListView").style.display = "block";
+    $("accountingScreenView").style.display = "none";
     await renderAccountsMerchantList();
   }
 }
 
-// ===================== Firebase Auth Activation =====================
-
-async function activateMerchantFirebaseAuth(merchantId) {
-  const merchant = merchantsCache.find((m) => m.id === merchantId);
-  if (!merchant) return;
-
-  const needsSync = merchant.firebaseAuthUid && merchant.firebaseAuthStatus !== "active";
-  const msg = needsSync
-    ? `حساب Firebase Auth للتاجر "${merchant.name}" يحتاج إعادة مزامنة. هل تتابع؟`
-    : `سيتم إنشاء حساب Firebase Auth للتاجر "${merchant.name}". هل تتابع؟`;
-
-  if (!confirm(msg)) return;
-
-  const btns = $("accProfileActions")?.querySelectorAll("button");
-  const activateBtn = btns ? btns[btns.length - (needsSync ? 1 : 1)] : null;
-  if (activateBtn) {
-    activateBtn.disabled = true;
-    activateBtn.textContent = "⏳ جاري التفعيل...";
-  }
-
-  try {
-    console.log(`[activateFirebaseAuth] Starting for merchant ${merchantId}`);
-    const provisionFn = firebase.functions().httpsCallable("provisionMerchantAuth");
-    const result = await provisionFn({
-      merchantId,
-      phone: merchant.phone || "",
-      email: merchant.email || null,
-    });
-
-    const data = result.data;
-
-    if (data.success) {
-      console.log(`[activateFirebaseAuth] Success for merchant ${merchantId}: uid=${data.uid}`);
-      merchant.firebaseAuthUid = data.uid;
-      merchant.firebaseAuthStatus = "active";
-      _accountsDataDirty = true;
-      await refreshMerchantProfile();
-      await renderAccountsMerchantList();
-      alert(`✅ تم ${needsSync ? "إعادة المزامنة" : "تفعيل Firebase Auth"} بنجاح للتاجر "${merchant.name}"`);
-    } else {
-      console.error(`[activateFirebaseAuth] Failed for merchant ${merchantId}:`, data.error, data.message);
-      alert(`❌ فشل التفعيل: ${data.message || data.error}`);
-      if (activateBtn) {
-        activateBtn.disabled = false;
-        activateBtn.textContent = "🔄 إعادة المحاولة";
-      }
-    }
-  } catch (err) {
-    console.error("[activateFirebaseAuth] Error:", err);
-    alert("❌ خطأ في الاتصال: " + err.message);
-    if (activateBtn) {
-      activateBtn.disabled = false;
-      activateBtn.textContent = "🔄 إعادة المحاولة";
-    }
+async function refreshAccountsUI() {
+  if ($("merchantListView")?.style.display !== "none") {
+    await renderAccountsMerchantList();
   }
 }
 
-async function checkMerchantAuthStatus(merchantId) {
-  try {
-    const checkFn = firebase.functions().httpsCallable("checkMerchantAuthStatus");
-    const result = await checkFn({ merchantId });
-    return result.data;
-  } catch (err) {
-    console.error("[checkMerchantAuthStatus] Error:", err);
-    return { success: false, status: "unknown" };
-  }
+// ===== Toast System =====
+
+function showToast(message, type) {
+  type = type || "success";
+  const container = $("toastContainer");
+  if (!container) return;
+
+  const icons = { success: "✅", error: "❌", warning: "⚠️", info: "ℹ️" };
+  const toast = document.createElement("div");
+  toast.className = "toast toast-" + type;
+  toast.innerHTML = `<span class="toast-icon">${icons[type] || "ℹ️"}</span><span class="toast-message">${message}</span>`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(10px)";
+    toast.style.transition = "opacity 0.3s, transform 0.3s";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
+// ===== Window exports =====
+
+window.showToast = showToast;
 window.refreshAccountsUI = refreshAccountsUI;
 window.markAccountsDirty = markAccountsDirty;
 window.initAccounts = initAccounts;
 window.onAccountsTabActivated = onAccountsTabActivated;
 window.renderAccountsDashboard = renderAccountsDashboard;
 window.renderAccountsMerchantList = renderAccountsMerchantList;
-window.filterAccountsMerchantList = filterAccountsMerchantList;
-window.refreshMerchantProfile = refreshMerchantProfile;
-window.activateMerchantFirebaseAuth = activateMerchantFirebaseAuth;
-window.checkMerchantAuthStatus = checkMerchantAuthStatus;
+window.filterMerchantCards = filterMerchantCards;
+window.setMerchantFilter = setMerchantFilter;
+window.toggleCardMoreMenu = toggleCardMoreMenu;
+window.toggleMerchantCardStatus = toggleMerchantCardStatus;
