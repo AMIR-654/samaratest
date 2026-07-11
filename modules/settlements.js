@@ -99,7 +99,7 @@ async function saveSettlement(e) {
       const merchantRef = db.collection("merchants").doc(merchantId);
 
       const invDoc = await transaction.get(invRef);
-      if (!invDoc.exists) throw new Error("لا توجد عهدة كافية لهذا التاجر");
+      if (!invDoc.exists) throw new Error("لا توجد كروت كافية لهذا التاجر");
 
       const invData = invDoc.data();
       const currentEntries = invData.entries || [];

@@ -54,7 +54,7 @@ function renderTransactionTable(transactions, containerId) {
 
 function getTransactionTypeLabel(type) {
   const labels = {
-    card_inventory_added: "عهدة",
+    card_inventory_added: "كروت",
     card_settlement: "حساب كروت",
     collection: "تحصيل",
     installation: "تركيب",
@@ -89,7 +89,7 @@ function renderStatementContent(txns) {
       <input type="date" id="stmtFilterTo" class="search-input" style="width:auto;flex:1;min-width:120px;" />
       <select id="stmtFilterType" class="search-input" style="width:auto;flex:1;min-width:120px;">
         <option value="">جميع المعاملات</option>
-        <option value="card_inventory_added">عهدة</option>
+        <option value="card_inventory_added">كروت</option>
         <option value="card_settlement">حساب كروت</option>
         <option value="installation">تركيب</option>
         <option value="correction">تصحيح</option>
@@ -100,7 +100,7 @@ function renderStatementContent(txns) {
     </div>
     <div style="margin-bottom:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">
       <div class="metric-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xs);padding:12px;">
-        <div style="font-size:12px;color:var(--text-muted);">إجمالي العهدة</div>
+        <div style="font-size:12px;color:var(--text-muted);">إجمالي الكروت</div>
         <div style="font-size:18px;font-weight:700;color:var(--success);">
           ${txns.filter(t => t.type === "card_inventory_added").reduce((s, t) => s + Math.abs(t.amount || 0), 0).toLocaleString("ar-SA")} ج.م
         </div>

@@ -207,24 +207,19 @@ function renderAcctSummary() {
       <div class="acct-summary-label">الكروت المباعة</div>
     </div>
     <div class="acct-summary-card">
-      <div class="acct-summary-icon">💰</div>
-      <div class="acct-summary-value warning">${stats.grandTotalValue.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">إجمالي المبيعات</div>
+      <div class="acct-summary-icon">📊</div>
+      <div class="acct-summary-value warning">${stats.grandRemaining.toLocaleString("ar-SA")}</div>
+      <div class="acct-summary-label">الكروت المتبقية</div>
     </div>
     <div class="acct-summary-card">
       <div class="acct-summary-icon">💵</div>
       <div class="acct-summary-value positive">${totalCollections.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">المستلم</div>
-    </div>
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">📉</div>
-      <div class="acct-summary-value negative">${currentBalance.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">المتبقي</div>
+      <div class="acct-summary-label">المبلغ المحصل</div>
     </div>
     <div class="acct-summary-card">
       <div class="acct-summary-icon">🔧</div>
       <div class="acct-summary-value purple">${installations.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">التركيبات</div>
+      <div class="acct-summary-label">عدد التركيبات</div>
     </div>`;
 }
 
@@ -264,7 +259,7 @@ function renderAcctTable() {
   const inv = _profileInventory;
 
   if (!inv || !inv.entries || !inv.entries.length) {
-    $("acctTableBody").innerHTML = `<tr><td colspan="6" class="acct-table-empty">لا توجد عهدة حالياً</td></tr>`;
+    $("acctTableBody").innerHTML = `<tr><td colspan="6" class="acct-table-empty">لا توجد كروت حالياً</td></tr>`;
     $("acctTableTotals").innerHTML = "";
     $("acctTableCount").textContent = "";
     return;
@@ -456,7 +451,7 @@ function renderAcctStatement() {
   const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
   const labels = {
-    card_inventory_added: { label: "عهدة", icon: "📦", color: "#3B82F6" },
+    card_inventory_added: { label: "كروت", icon: "📦", color: "#3B82F6" },
     card_settlement: { label: "حساب كروت", icon: "🧮", color: "#EF4444" },
     cash_collection: { label: "استلام نقدي", icon: "💵", color: "#10B981" },
     installation: { label: "تركيب", icon: "🔧", color: "#8B5CF6" },

@@ -14,7 +14,7 @@ const FILTER_OPTIONS = [
   { id: "archived", label: "مؤرشف" },
   { id: "has_balance", label: "لديه رصيد" },
   { id: "zero_balance", label: "رصيد صفري" },
-  { id: "has_inventory", label: "لديه عهدة" },
+  { id: "has_inventory", label: "لديه كروت" },
   { id: "supports_installations", label: "يدعم التركيبات" },
 ];
 
@@ -153,8 +153,8 @@ function renderMerchantCards() {
   if (!filtered.length) {
     const hasFilters = _currentFilter !== "all" || _searchTerm;
     grid.innerHTML = hasFilters
-      ? `<div class="merchant-empty-state"><div class="merchant-empty-state-icon">🔍</div><div class="merchant-empty-state-text">لا توجد نتائج</div><div class="merchant-empty-state-hint">حاول تغيير معايير البحث أو الفلتر</div></div>`
-      : `<div class="merchant-empty-state"><div class="merchant-empty-state-icon">📦</div><div class="merchant-empty-state-text">لا يوجد تجار بعد</div><div class="merchant-empty-state-hint">قم بإضافة تاجر جديد للبدء</div><button class="btn btn-primary" onclick="openMerchantModal()">+ إضافة تاجر</button></div>`;
+      ? `<div class="merchant-empty-state"><div class="merchant-empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div><div class="merchant-empty-state-text">لا توجد نتائج</div><div class="merchant-empty-state-hint">حاول تغيير معايير البحث أو الفلتر</div></div>`
+      : `<div class="merchant-empty-state"><div class="merchant-empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg></div><div class="merchant-empty-state-text">لا يوجد تجار بعد</div><div class="merchant-empty-state-hint">قم بإضافة تاجر جديد للبدء</div><button class="btn btn-primary" onclick="openMerchantModal()">+ إضافة تاجر</button></div>`;
     return;
   }
 
@@ -174,6 +174,10 @@ function renderMerchantCard(m) {
   const lastAct = m.updatedAt
     ? (m.updatedAt.toDate ? m.updatedAt.toDate() : new Date(m.updatedAt)).toLocaleString("ar-EG")
     : "-";
+  const totalCards = m.totalCards || 0;
+  const totalSold = m.totalSold || 0;
+  const totalRemaining = totalCards - totalSold;
+  const totalCollections = m.totalCollections || 0;
 
   return `
     <div class="merchant-card" onclick="openMerchantProfile('${m.id}')">
@@ -198,11 +202,19 @@ function renderMerchantCard(m) {
         </div>
         <div class="merchant-card-stat">
           <div class="merchant-card-stat-value">${(m.totalCards || 0).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">الكروت</div>
+          <div class="merchant-card-stat-label">إجمالي الكروت</div>
         </div>
         <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value">${(m.totalCardValue || 0).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">قيمة العهدة</div>
+          <div class="merchant-card-stat-value">${(m.totalSold || 0).toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">المباع</div>
+        </div>
+        <div class="merchant-card-stat">
+          <div class="merchant-card-stat-value">${((m.totalCards || 0) - (m.totalSold || 0)).toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">المتبقي</div>
+        </div>
+        <div class="merchant-card-stat">
+          <div class="merchant-card-stat-value">${(m.totalCollections || 0).toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">المحصل</div>
         </div>
       </div>
       <div class="merchant-card-last-activity">آخر نشاط: ${lastAct}</div>

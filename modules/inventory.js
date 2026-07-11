@@ -1,4 +1,4 @@
-// ===== Inventory (العهدة) Module =====
+// ===== Inventory (الكروت) Module =====
 
 let inventoryCardPrices = [];
 
@@ -23,7 +23,7 @@ function getPriceSnapshot() {
 function openAddInventoryModal(merchantId) {
   const merchant = merchantsCache.find((m) => m.id === merchantId);
   $("invMerchantId").value = merchantId;
-  $("invModalTitle").textContent = `إضافة عهدة — ${merchant ? merchant.name : ""}`;
+  $("invModalTitle").textContent = `إضافة كروت — ${merchant ? merchant.name : ""}`;
 
   const container = $("invPriceEntries");
   if (!container) return;
@@ -129,7 +129,7 @@ async function saveInventory(e) {
       const txnRef = db.collection("merchant_transactions").doc(merchantId).collection("items").doc();
       transaction.set(txnRef, {
         type: "card_inventory_added", merchantId, amount: 0, date, time, createdBy: "admin",
-        notes: `إضافة عهدة: ${entries.map((e) => `${e.count} كارت فئة ${e.category}`).join("، ")}`,
+        notes: `إضافة كروت: ${entries.map((e) => `${e.count} كارت فئة ${e.category}`).join("، ")}`,
         priceSnapshot: getPriceSnapshot(), metadata: { entries, totalCards, totalValue }, createdAt: now, updatedAt: now,
       });
 
@@ -138,12 +138,12 @@ async function saveInventory(e) {
         action: "create", collection: "merchant_inventory", docId: merchantId,
         oldValue: invDoc.exists ? { entries: invData.entries, totalCards: invData.totalCards, totalValue: invData.totalValue } : null,
         newValue: { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue },
-        performedBy: "admin", reason: "إضافة عهدة", timestamp: now, date, time,
+        performedBy: "admin", reason: "إضافة كروت", timestamp: now, date, time,
       });
 
       const notifRef = db.collection("merchant_notifications").doc();
       transaction.set(notifRef, {
-        merchantId, type: "inventory_added", title: "إضافة عهدة",
+        merchantId, type: "inventory_added", title: "إضافة كروت",
         message: `تم إضافة ${totalCards} كرت بقيمة ${totalValue.toLocaleString("ar-SA")} ج.م`,
         read: false, createdAt: now,
       });
@@ -156,9 +156,9 @@ async function saveInventory(e) {
     if (typeof currentMerchantProfileId !== "undefined" && currentMerchantProfileId === merchantId) {
       if (typeof refreshMerchantProfile === "function") await refreshMerchantProfile();
     }
-    showToast("✅ تم إضافة العهدة بنجاح", "success");
+    showToast("✅ تم إضافة الكروت بنجاح", "success");
   } catch (err) {
-    showToast("خطأ في حفظ العهدة: " + err.message, "error");
+    showToast("خطأ في حفظ الكروت: " + err.message, "error");
   }
 }
 
