@@ -74,7 +74,8 @@ async function saveInstallation(e) {
       const merchantRef = db.collection("merchants").doc(merchantId);
       const merchantSnap = await transaction.get(merchantRef);
       const mData = merchantSnap.exists ? merchantSnap.data() : {};
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const today = new Date();
+      const currentMonth = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0");
       const isSameMonth = (mData.monthlyStatsPeriod || "") === currentMonth;
 
       transaction.update(merchantRef, {

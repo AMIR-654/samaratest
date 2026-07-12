@@ -10,15 +10,25 @@ let _profileUnsubscribers = [];
 let editCategoryRow = null;
 let editCategoryValue = "";
 
+// Timezone-safe local date helpers
+function getLocalYearMonth(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getLocalYearMonthDay(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // Month navigation: YYYY-MM string
-let _selectedMonth = new Date().toISOString().slice(0, 7);
+let _selectedMonth = getLocalYearMonth();
 
 // ===== Month Navigation =====
 
 function changeAcctMonth(delta) {
   const [y, m] = _selectedMonth.split("-").map(Number);
+  // Construct date in local timezone
   const d = new Date(y, m - 1 + delta, 1);
-  _selectedMonth = d.toISOString().slice(0, 7);
+  _selectedMonth = getLocalYearMonth(d);
   renderAcctMonthLabel();
   renderAcctSummary();
   renderAcctStatement();
@@ -37,8 +47,8 @@ function getSelectedMonthRange() {
   const start = new Date(y, m - 1, 1);
   const end = new Date(y, m, 0);
   return {
-    start: start.toISOString().split("T")[0],
-    end: end.toISOString().split("T")[0],
+    start: getLocalYearMonthDay(start),
+    end: getLocalYearMonthDay(end),
   };
 }
 
@@ -54,7 +64,7 @@ async function openMerchantProfile(merchantId) {
   $("accountingScreenView").style.display = "block";
 
   // Reset to current month on each open
-  _selectedMonth = new Date().toISOString().slice(0, 7);
+  _selectedMonth = getLocalYearMonth();
   renderAcctMonthLabel();
   renderAcctSkeleton();
   await renderAcctData();
@@ -84,16 +94,20 @@ function startProfileListeners(merchantId) {
       _profileMerchant = { id: snap.id, ...snap.data() };
       const idx = merchantsCache.findIndex((m) => m.id === merchantId);
       if (idx !== -1) merchantsCache[idx] = _profileMerchant;
-      renderAcctHeader();
-      renderAcctSummary();
-      renderAcctSettlement();
+      if (!editCategoryRow) {
+        renderAcctHeader();
+        renderAcctSummary();
+        renderAcctSettlement();
+      }
     }, (err) => console.warn("[Profile] Merchant listener:", err));
   _profileUnsubscribers.push(merchantUnsub);
 
   const invUnsub = db.collection("merchant_inventory").doc(merchantId)
     .onSnapshot((snap) => {
       _profileInventory = snap.exists ? { id: snap.id, ...snap.data() } : null;
-      renderAcctTable();
+      if (!editCategoryRow) {
+        renderAcctTable();
+      }
     }, (err) => console.warn("[Profile] Inventory listener:", err));
   _profileUnsubscribers.push(invUnsub);
 
@@ -102,7 +116,9 @@ function startProfileListeners(merchantId) {
     .onSnapshot((snap) => {
       _profilePrices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       inventoryCardPrices = _profilePrices;
-      renderAcctTable();
+      if (!editCategoryRow) {
+        renderAcctTable();
+      }
     }, (err) => console.warn("[Profile] Prices listener:", err));
   _profileUnsubscribers.push(pricesUnsub);
 
@@ -111,8 +127,10 @@ function startProfileListeners(merchantId) {
     .orderBy("createdAt", "desc")
     .onSnapshot((snap) => {
       _profileInstallations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderAcctTable();
-      renderAcctInstallations();
+      if (!editCategoryRow) {
+        renderAcctTable();
+        renderAcctInstallations();
+      }
     }, (err) => console.warn("[Profile] Installations listener:", err));
   _profileUnsubscribers.push(instUnsub);
 
@@ -121,8 +139,10 @@ function startProfileListeners(merchantId) {
     .limit(300)
     .onSnapshot((snap) => {
       _profileTransactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderAcctSummary();
-      renderAcctStatement();
+      if (!editCategoryRow) {
+        renderAcctSummary();
+        renderAcctStatement();
+      }
       // Denormalize monthly stats back to merchant doc for the list view
       writeDenormalizedMonthlyStats(merchantId);
     }, (err) => console.warn("[Profile] Transactions listener:", err));
@@ -132,18 +152,18 @@ function startProfileListeners(merchantId) {
 // ===== Denormalize monthly stats to merchant doc (for list card display) =====
 
 async function writeDenormalizedMonthlyStats(merchantId) {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getLocalYearMonth();
   const { start, end } = getSelectedMonthRange();
 
   let cardsAdded = 0;
   let cashCollected = 0;
   let installationsValue = 0;
 
-  // Always compute for current month regardless of selected month navigator
-  const curStart = new Date().toISOString().slice(0, 8) + "01";
   const [y, m] = currentMonth.split("-").map(Number);
   const lastDay = new Date(y, m, 0).getDate();
   const curEnd = `${currentMonth}-${String(lastDay).padStart(2, "0")}`;
+
+  const supportsInstallations = _profileMerchant && _profileMerchant.supportsInstallations !== false;
 
   _profileTransactions.forEach((tx) => {
     if (!tx.date || tx.date < `${currentMonth}-01` || tx.date > curEnd) return;
@@ -153,7 +173,7 @@ async function writeDenormalizedMonthlyStats(merchantId) {
       else if (meta?.entries) cardsAdded += meta.entries.reduce((s, e) => s + (e.count || 0), 0);
     } else if (tx.type === "cash_collection") {
       cashCollected += Math.abs(tx.amount || 0);
-    } else if (tx.type === "installation") {
+    } else if (tx.type === "installation" && supportsInstallations) {
       installationsValue += Math.abs(tx.amount || 0);
     }
   });
@@ -227,6 +247,13 @@ function renderAcctHeader() {
   $("acctPhone").innerHTML = `📞 ${escapeHtml(m.phone || "-")}`;
   $("acctFirebaseStatus").innerHTML = fbHtml;
   $("acctLastActivity").innerHTML = `🕐 ${lastAct}`;
+
+  // Hide installations action button if supportsInstallations is false
+  const supportsInstallations = m.supportsInstallations !== false;
+  const addInstBtn = document.querySelector("#acctMoreMenu button[onclick*='openInstallationModal']");
+  if (addInstBtn) {
+    addInstBtn.style.display = supportsInstallations ? "block" : "none";
+  }
 }
 
 // ===== Monthly Summary Calculation (filtered by selected month) =====
@@ -237,6 +264,8 @@ function getFilteredMonthlySummary() {
   let totalCashCollected = 0;
   let totalInstallationsValue = 0;
 
+  const supportsInstallations = _profileMerchant && _profileMerchant.supportsInstallations !== false;
+
   _profileTransactions.forEach((tx) => {
     if (!tx.date || tx.date < start || tx.date > end) return;
     if (tx.type === "card_inventory_added") {
@@ -245,7 +274,7 @@ function getFilteredMonthlySummary() {
       else if (meta?.entries) totalCardsAdded += meta.entries.reduce((s, e) => s + (e.count || 0), 0);
     } else if (tx.type === "cash_collection") {
       totalCashCollected += Math.abs(tx.amount || 0);
-    } else if (tx.type === "installation") {
+    } else if (tx.type === "installation" && supportsInstallations) {
       totalInstallationsValue += Math.abs(tx.amount || 0);
     }
   });
@@ -258,9 +287,9 @@ function getFilteredMonthlySummary() {
 function renderAcctSummary() {
   if (!_profileMerchant) return;
   const stats = getFilteredMonthlySummary();
-  const { start, end } = getSelectedMonthRange();
+  const supportsInstallations = _profileMerchant.supportsInstallations !== false;
 
-  $("acctSummary").innerHTML = `
+  let summaryHtml = `
     <div class="acct-summary-card" style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.15);">
       <div class="acct-summary-icon" style="color:var(--primary);">📦</div>
       <div class="acct-summary-value info">${stats.totalCardsAdded.toLocaleString("ar-SA")}</div>
@@ -270,20 +299,27 @@ function renderAcctSummary() {
       <div class="acct-summary-icon" style="color:var(--success);">💵</div>
       <div class="acct-summary-value positive">${stats.totalCashCollected.toLocaleString("ar-SA")} ج.م</div>
       <div class="acct-summary-label">محصل نقداً هذا الشهر</div>
-    </div>
-    <div class="acct-summary-card" style="background:rgba(139,92,246,0.05);border:1px solid rgba(139,92,246,0.15);">
-      <div class="acct-summary-icon" style="color:#8b5cf6;">🔧</div>
-      <div class="acct-summary-value purple">${stats.totalInstallationsValue.toLocaleString("ar-SA")} ج.م</div>
-      <div class="acct-summary-label">قيمة التركيبات هذا الشهر</div>
-    </div>
-  `;
+    </div>`;
+
+  if (supportsInstallations) {
+    summaryHtml += `
+      <div class="acct-summary-card" style="background:rgba(139,92,246,0.05);border:1px solid rgba(139,92,246,0.15);">
+        <div class="acct-summary-icon" style="color:#8b5cf6;">🔧</div>
+        <div class="acct-summary-value purple">${stats.totalInstallationsValue.toLocaleString("ar-SA")} ج.م</div>
+        <div class="acct-summary-label">قيمة التركيبات هذا الشهر</div>
+      </div>`;
+  }
+
+  $("acctSummary").innerHTML = summaryHtml;
 }
 
 // ===== Accounting Stats (live inventory — NEVER affected by month) =====
 
 function getAccountingStats() {
   const inv = _profileInventory;
-  const categories = _profilePrices.map((p) => p.category);
+  const categories = _profilePrices
+    .filter((p) => p.status !== "inactive" || (inv?.entries?.find((e) => e.category === p.id || e.category === p.category)?.count ?? 0) > 0)
+    .map((p) => p.category);
 
   // Also surface any inventory entries whose category isn't in prices
   if (inv?.entries) {
@@ -326,6 +362,7 @@ function renderAcctTable() {
   if (!tbody) return;
 
   const stats = getAccountingStats();
+  const supportsInstallations = _profileMerchant && _profileMerchant.supportsInstallations !== false;
 
   let rowsHtml = stats.rows.map((row) => {
     const isEditing = editCategoryRow === row.id;
@@ -341,14 +378,14 @@ function renderAcctTable() {
         <td style="background:rgba(59,130,246,0.1);padding:8px;vertical-align:middle;">
           <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:4px;">
             <input type="number" id="inlineEditInput" value="${editCategoryValue}"
-              oninput="handleInlineEditInput('${row.id}',this.value)"
+              oninput="handleInlineEditInput('${row.id}',this.value,${row.cardsCount},${row.price})"
               style="width:72px;padding:4px 6px;border:1px solid var(--primary);border-radius:4px;text-align:center;background:var(--surface);color:var(--text);font-size:14px;" />
             <button onclick="saveInlineEdit('${row.id}')" style="background:var(--success);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:13px;">✓</button>
             <button onclick="cancelInlineEdit()" style="background:var(--text-muted);color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:13px;">×</button>
           </div>
           <div style="font-size:10px;color:var(--text-muted);text-align:center;">
-            السابق: ${row.cardsCount} &rarr; الجديد: ${numVal} &rarr;
-            الفرق: <span style="color:${diffColor};font-weight:700;">${diffText}</span>
+            السابق: ${row.cardsCount} &rarr; الجديد: <span id="previewNewVal">${numVal}</span> &rarr;
+            الفرق: <span id="previewDiffVal" style="color:${diffColor};font-weight:700;">${diffText}</span>
           </div>
         </td>`;
     } else {
@@ -369,28 +406,30 @@ function renderAcctTable() {
           <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">سعر التاجر: ${row.price.toLocaleString("ar-SA")} ج.م</div>
         </td>
         ${countCell}
-        <td class="total-cell" style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;">
+        <td class="total-cell" id="rowTotal_${row.id}" style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;">
           ${displayTotal.toLocaleString("ar-SA")} ج.م
         </td>
       </tr>`;
   }).join("");
 
-  // Installations row — always inside the table
-  const instCount = _profileInstallations.length;
-  const instTotal = _profileInstallations.reduce((s, i) => s + (i.price || 0), 0);
-  rowsHtml += `
-    <tr onclick="openInstDetailsModal()" style="cursor:pointer;background:rgba(139,92,246,0.04);">
-      <td style="text-align:right;vertical-align:middle;padding:10px 12px;border-right:3px solid #8b5cf6;">
-        <div style="font-weight:700;font-size:14px;color:#8b5cf6;">🔧 التركيبات</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">اضغط لعرض التفاصيل</div>
-      </td>
-      <td style="text-align:center;vertical-align:middle;font-weight:600;font-size:15px;color:#8b5cf6;">
-        ${instCount.toLocaleString("ar-SA")} تركيب
-      </td>
-      <td style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;color:#8b5cf6;">
-        ${instTotal.toLocaleString("ar-SA")} ج.م
-      </td>
-    </tr>`;
+  // Installations row — always inside the table (if enabled)
+  const instCount = supportsInstallations ? _profileInstallations.length : 0;
+  const instTotal = supportsInstallations ? _profileInstallations.reduce((s, i) => s + (i.price || 0), 0) : 0;
+  if (supportsInstallations) {
+    rowsHtml += `
+      <tr onclick="openInstDetailsModal()" style="cursor:pointer;background:rgba(139,92,246,0.04);">
+        <td style="text-align:right;vertical-align:middle;padding:10px 12px;border-right:3px solid #8b5cf6;">
+          <div style="font-weight:700;font-size:14px;color:#8b5cf6;">🔧 التركيبات</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">اضغط لعرض التفاصيل</div>
+        </td>
+        <td style="text-align:center;vertical-align:middle;font-weight:600;font-size:15px;color:#8b5cf6;">
+          ${instCount.toLocaleString("ar-SA")} تركيب
+        </td>
+        <td style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;color:#8b5cf6;">
+          ${instTotal.toLocaleString("ar-SA")} ج.م
+        </td>
+      </tr>`;
+  }
 
   tbody.innerHTML = rowsHtml || `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted);">لا توجد فئات أسعار. أضف فئات من إعدادات أسعار الكروت.</td></tr>`;
 
@@ -410,8 +449,8 @@ function renderAcctTable() {
   tfoot.innerHTML = `
     <tr style="background:var(--surface-hover);border-top:2px solid var(--border);">
       <td style="font-weight:800;font-size:14px;text-align:right;padding:12px;">الإجمالي العام</td>
-      <td style="font-weight:800;font-size:16px;text-align:center;color:var(--primary);">${liveCardsCount.toLocaleString("ar-SA")} كرت</td>
-      <td style="font-weight:800;font-size:17px;text-align:center;color:var(--primary);">${grandTotal.toLocaleString("ar-SA")} ج.م</td>
+      <td id="grandCardsCountCell" style="font-weight:800;font-size:16px;text-align:center;color:var(--primary);">${liveCardsCount.toLocaleString("ar-SA")} كرت</td>
+      <td id="grandTotalCell" style="font-weight:800;font-size:17px;text-align:center;color:var(--primary);">${grandTotal.toLocaleString("ar-SA")} ج.م</td>
     </tr>`;
 }
 
@@ -427,9 +466,51 @@ function startInlineEdit(rowId, currentCount) {
   }, 50);
 }
 
-function handleInlineEditInput(rowId, val) {
+function handleInlineEditInput(rowId, val, prevCount, price) {
   editCategoryValue = val;
-  renderAcctTable();
+  const numVal = parseInt(val) || 0;
+  const diff = numVal - prevCount;
+  const diffText = diff >= 0 ? `+${diff}` : `${diff}`;
+  const diffColor = diff >= 0 ? "var(--success)" : "var(--danger)";
+
+  const newValSpan = document.getElementById("previewNewVal");
+  if (newValSpan) newValSpan.textContent = numVal;
+
+  const diffValSpan = document.getElementById("previewDiffVal");
+  if (diffValSpan) {
+    diffValSpan.textContent = diffText;
+    diffValSpan.style.color = diffColor;
+  }
+
+  const rowTotalSpan = document.getElementById(`rowTotal_${rowId}`);
+  if (rowTotalSpan) {
+    rowTotalSpan.textContent = `${(numVal * price).toLocaleString("ar-SA")} ج.م`;
+  }
+
+  // Update totals live in DOM without calling renderAcctTable()
+  const stats = getAccountingStats();
+  const supportsInstallations = _profileMerchant && _profileMerchant.supportsInstallations !== false;
+  const instTotal = supportsInstallations ? _profileInstallations.reduce((s, i) => s + (i.price || 0), 0) : 0;
+
+  let liveCardsCount = stats.grandCardsCount;
+  let liveCategoryTotal = stats.grandCategoryTotal;
+
+  if (editCategoryRow) {
+    const n = numVal;
+    liveCardsCount = stats.rows.reduce((s, r) => s + (r.id === editCategoryRow ? n : r.cardsCount), 0);
+    liveCategoryTotal = stats.rows.reduce((s, r) => s + (r.id === editCategoryRow ? n * r.price : r.rowTotal), 0);
+  }
+  const grandTotal = liveCategoryTotal + instTotal;
+
+  const cardsCountCell = document.getElementById("grandCardsCountCell");
+  if (cardsCountCell) {
+    cardsCountCell.textContent = `${liveCardsCount.toLocaleString("ar-SA")} كرت`;
+  }
+
+  const grandTotalCell = document.getElementById("grandTotalCell");
+  if (grandTotalCell) {
+    grandTotalCell.textContent = `${grandTotal.toLocaleString("ar-SA")} ج.م`;
+  }
 }
 
 function cancelInlineEdit() {
@@ -458,9 +539,9 @@ async function saveInlineEdit(rowId) {
   const merchantPrice = priceDoc.merchantPrice || 0;
   const totalValueDiff = Math.abs(diff) * merchantPrice;
   const now = firebase.firestore.FieldValue.serverTimestamp();
-  const date = new Date().toISOString().split("T")[0];
+  const date = getLocalYearMonthDay();
   const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getLocalYearMonth();
   const txnType = diff > 0 ? "card_inventory_added" : "card_settlement";
   const txnNotes = diff > 0
     ? `إضافة كروت: ${diff} كارت فئة ${row.category}`
@@ -612,9 +693,9 @@ async function saveProfileSettlement() {
   if (!confirm(`تأكيد تسجيل تحصيل نقدي بقيمة ${receive.toLocaleString("ar-SA")} ج.م؟`)) return;
 
   const now = firebase.firestore.FieldValue.serverTimestamp();
-  const date = new Date().toISOString().split("T")[0];
+  const date = getLocalYearMonthDay();
   const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getLocalYearMonth();
 
   try {
     await db.runTransaction(async (transaction) => {

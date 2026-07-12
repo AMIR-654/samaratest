@@ -193,48 +193,48 @@ function renderCardPriceList() {
 
   if (!inventoryCardPrices.length) {
     container.innerHTML = `
-      <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
-        <span style="flex:1.5;">الفئة</span>
-        <span style="width:90px;text-align:center;">سعر التاجر</span>
-        <span style="width:90px;text-align:center;">سعر البيع</span>
-        <span style="width:80px;text-align:center;">الحالة</span>
-        <span style="width:50px;text-align:center;">الترتيب</span>
-        <span style="width:30px;"></span>
-      </div>
-      <p style="text-align:center;color:var(--text-muted);padding:16px;">لا توجد فئات أسعار. أضف الفئة الأولى.</p>
+      <p style="text-align:center;color:var(--text-muted);padding:16px;">لا توجد فئات أسعار. أضف الفئة الأولى للبدء.</p>
+      <div id="cpRowsContainer"></div>
     `;
     return;
   }
 
   const rowsHtml = inventoryCardPrices.map((p, i) => `
-    <div class="cp-row" data-id="${p.id || ""}" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);" data-index="${i}">
-      <input type="text" class="cp-category" value="${escapeHtml(p.category || "")}" placeholder="الفئة (مثال: 100)"
-        style="flex:1.5;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
-      <input type="number" class="cp-price" value="${p.merchantPrice || 0}" min="0" step="0.01" placeholder="سعر التاجر"
-        style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-      <input type="number" class="cp-selling-price" value="${p.sellingPrice || 0}" min="0" step="0.01" placeholder="سعر البيع"
-        style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-      <select class="cp-status" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);">
-        <option value="active" ${p.status !== "inactive" ? "selected" : ""}>نشط</option>
-        <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>غير نشط</option>
-      </select>
-      <input type="number" class="cp-sort" value="${p.sortOrder || i}" min="0" placeholder="ترتيب"
-        style="width:50px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-      <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="background:var(--danger);color:white;border:none;padding:6px 10px;border-radius:var(--radius-xs);cursor:pointer;">×</button>
+    <div class="cp-row" data-id="${p.id || ""}" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;background:var(--surface);display:grid;grid-template-columns:1fr 1fr;gap:10px;" data-index="${i}">
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الفئة (Category)</label>
+        <input type="text" class="cp-category" value="${escapeHtml(p.category || "")}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label style="font-size:12px;font-weight:700;color:var(--text-muted);">سعر التاجر (Merchant Price)</label>
+        <input type="number" class="cp-price" value="${p.merchantPrice || 0}" min="0" step="0.01"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label style="font-size:12px;font-weight:700;color:var(--text-muted);">سعر البيع (Selling Price)</label>
+        <input type="number" class="cp-selling-price" value="${p.sellingPrice || 0}" min="0" step="0.01"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الحالة (Status)</label>
+        <select class="cp-status" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);height:37px;">
+          <option value="active" ${p.status !== "inactive" ? "selected" : ""}>نشط (Active)</option>
+          <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>غير نشط (Inactive)</option>
+        </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الترتيب (Sort Order)</label>
+        <input type="number" class="cp-sort" value="${p.sortOrder || i}" min="0"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      </div>
+      <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
+        <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="width:100%;height:37px;background:var(--danger);color:white;border:none;border-radius:var(--radius-xs);cursor:pointer;font-weight:bold;">حذف الفئة</button>
+      </div>
     </div>
   `).join("");
 
-  container.innerHTML = `
-    <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
-      <span style="flex:1.5;">الفئة</span>
-      <span style="width:90px;text-align:center;">سعر التاجر</span>
-      <span style="width:90px;text-align:center;">سعر البيع</span>
-      <span style="width:80px;text-align:center;">الحالة</span>
-      <span style="width:50px;text-align:center;">الترتيب</span>
-      <span style="width:30px;"></span>
-    </div>
-    <div id="cpRowsContainer">${rowsHtml}</div>
-  `;
+  container.innerHTML = `<div id="cpRowsContainer">${rowsHtml}</div>`;
 }
 
 function addCardPriceRow() {
@@ -242,37 +242,44 @@ function addCardPriceRow() {
   if (!rowsContainer) {
     const container = $("cardPriceList");
     if (!container) return;
-    container.innerHTML = `
-      <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
-        <span style="flex:1.5;">الفئة</span>
-        <span style="width:90px;text-align:center;">سعر التاجر</span>
-        <span style="width:90px;text-align:center;">سعر البيع</span>
-        <span style="width:80px;text-align:center;">الحالة</span>
-        <span style="width:50px;text-align:center;">الترتيب</span>
-        <span style="width:30px;"></span>
-      </div>
-      <div id="cpRowsContainer"></div>
-    `;
+    container.innerHTML = `<div id="cpRowsContainer"></div>`;
     rowsContainer = document.getElementById("cpRowsContainer");
   }
 
   const div = document.createElement("div");
   div.className = "cp-row";
-  div.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);";
+  div.style.cssText = "border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;background:var(--surface);display:grid;grid-template-columns:1fr 1fr;gap:10px;";
   div.innerHTML = `
-    <input type="text" class="cp-category" value="" placeholder="الفئة (مثال: 100)"
-      style="flex:1.5;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
-    <input type="number" class="cp-price" value="0" min="0" step="0.01" placeholder="سعر التاجر"
-      style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-    <input type="number" class="cp-selling-price" value="0" min="0" step="0.01" placeholder="سعر البيع"
-      style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-    <select class="cp-status" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);">
-      <option value="active" selected>نشط</option>
-      <option value="inactive">غير نشط</option>
-    </select>
-    <input type="number" class="cp-sort" value="0" min="0" placeholder="ترتيب"
-      style="width:50px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-    <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="background:var(--danger);color:white;border:none;padding:6px 10px;border-radius:var(--radius-xs);cursor:pointer;">×</button>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الفئة (Category)</label>
+      <input type="text" class="cp-category" value=""
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);">سعر التاجر (Merchant Price)</label>
+      <input type="number" class="cp-price" value="0" min="0" step="0.01"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);">سعر البيع (Selling Price)</label>
+      <input type="number" class="cp-selling-price" value="0" min="0" step="0.01"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الحالة (Status)</label>
+      <select class="cp-status" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);height:37px;">
+        <option value="active" selected>نشط (Active)</option>
+        <option value="inactive">غير نشط (Inactive)</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:12px;font-weight:700;color:var(--text-muted);">الترتيب (Sort Order)</label>
+      <input type="number" class="cp-sort" value="0" min="0"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    </div>
+    <div style="display:flex;align-items:flex-end;justify-content:flex-end;">
+      <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="width:100%;height:37px;background:var(--danger);color:white;border:none;border-radius:var(--radius-xs);cursor:pointer;font-weight:bold;">حذف الفئة</button>
+    </div>
   `;
   rowsContainer.appendChild(div);
 }
