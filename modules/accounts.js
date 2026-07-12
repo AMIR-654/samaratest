@@ -169,15 +169,21 @@ function renderMerchantCard(m) {
   const fbOk = m.firebaseAuthUid && m.firebaseAuthStatus === "active";
   const fbLabel = fbOk ? "Firebase مفعل" : m.firebaseAuthUid ? "يحتاج مزامنة" : "غير مفعل";
   const fbClass = fbOk ? "firebase-ok" : m.firebaseAuthUid ? "firebase-pending" : "firebase-missing";
-  const balance = m.currentBalance || 0;
-  const balanceClass = balance > 0 ? "positive" : balance < 0 ? "negative" : "";
   const lastAct = m.updatedAt
     ? (m.updatedAt.toDate ? m.updatedAt.toDate() : new Date(m.updatedAt)).toLocaleString("ar-EG")
     : "-";
-  const totalCards = m.totalCards || 0;
-  const totalSold = m.totalSold || 0;
-  const totalRemaining = totalCards - totalSold;
-  const totalCollections = m.totalCollections || 0;
+
+  // Monthly stats — read from denormalized fields on the merchant document
+  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const statsMonth = m.monthlyStatsPeriod || "";
+  const isSameMonth = statsMonth === currentMonth;
+
+  const monthlyCardsAdded = isSameMonth ? (m.monthlyCardsAdded || 0) : 0;
+  const monthlyCashCollected = isSameMonth ? (m.monthlyCashCollected || 0) : 0;
+  const monthlyInstallationsValue = isSameMonth ? (m.monthlyInstallationsValue || 0) : 0;
+
+  const now = new Date();
+  const monthLabel = now.toLocaleDateString("ar-SA", { month: "long", year: "numeric" });
 
   return `
     <div class="merchant-card" onclick="openMerchantProfile('${m.id}')">
@@ -195,28 +201,26 @@ function renderMerchantCard(m) {
           <span class="merchant-card-badge ${fbClass}" title="حالة Firebase Auth">${fbLabel}</span>
         </div>
       </div>
+
+      <div style="font-size:10px;color:var(--text-muted);text-align:center;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+        إحصائيات ${monthLabel}
+      </div>
+
       <div class="merchant-card-stats">
         <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value ${balanceClass}">${balance.toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">الرصيد</div>
+          <div class="merchant-card-stat-value info">${monthlyCardsAdded.toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">كروت مضافة</div>
         </div>
         <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value">${(m.totalCards || 0).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">إجمالي الكروت</div>
+          <div class="merchant-card-stat-value positive">${monthlyCashCollected.toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">محصل نقداً</div>
         </div>
         <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value">${(m.totalSold || 0).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">المباع</div>
-        </div>
-        <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value">${((m.totalCards || 0) - (m.totalSold || 0)).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">المتبقي</div>
-        </div>
-        <div class="merchant-card-stat">
-          <div class="merchant-card-stat-value">${(m.totalCollections || 0).toLocaleString("ar-SA")}</div>
-          <div class="merchant-card-stat-label">المحصل</div>
+          <div class="merchant-card-stat-value" style="color:#8b5cf6;">${monthlyInstallationsValue.toLocaleString("ar-SA")}</div>
+          <div class="merchant-card-stat-label">قيمة التركيبات</div>
         </div>
       </div>
+
       <div class="merchant-card-last-activity">آخر نشاط: ${lastAct}</div>
       <div class="merchant-card-actions" onclick="event.stopPropagation()">
         <button class="merchant-card-action primary" onclick="openMerchantProfile('${m.id}')">فتح</button>
@@ -229,7 +233,6 @@ function renderMerchantCard(m) {
           <div class="merchant-card-more-menu" id="moreMenu_${m.id}">
             <button onclick="openStatementModal('${m.id}')">📊 كشف الحساب</button>
             <button onclick="openInstallationModal('${m.id}')">🔧 إضافة تركيب</button>
-            <button onclick="openSettlementModal('${m.id}')">🧮 حساب الكروت</button>
             <button onclick="archiveMerchant('${m.id}')">📦 أرشفة</button>
           </div>
         </div>

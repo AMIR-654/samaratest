@@ -31,14 +31,23 @@ function openAddInventoryModal(merchantId) {
   if (!inventoryCardPrices.length) {
     container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px;">يرجى إضافة أسعار الكروت أولاً في إعدادات أسعار الكروت</p>';
   } else {
-    container.innerHTML = inventoryCardPrices.map((p) => `
-      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
-        <span style="flex:1;font-weight:600;">فئة ${p.category}</span>
-        <span style="font-size:12px;color:var(--text-muted);">السعر: ${p.merchantPrice} ج.م</span>
-        <input type="number" min="0" value="0" class="inv-count" data-category="${p.category}" data-price="${p.merchantPrice}"
-          style="width:80px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
-      </div>
-    `).join("");
+    // Filter only active prices
+    const activePrices = inventoryCardPrices.filter(p => p.status !== "inactive");
+    if (!activePrices.length) {
+      container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px;">لا توجد فئات أسعار نشطة. يرجى تفعيل فئة واحدة على الأقل.</p>';
+    } else {
+      container.innerHTML = activePrices.map((p) => `
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
+          <span style="flex:1;font-weight:600;">فئة ${p.category}</span>
+          <span style="font-size:12px;color:var(--text-muted);">السعر: ${p.merchantPrice} ج.م</span>
+          <input type="number" min="0" value="0" class="inv-count"
+            data-category-id="${p.id}"
+            data-category="${p.category}"
+            data-price="${p.merchantPrice}"
+            style="width:80px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+        </div>
+      `).join("");
+    }
   }
 
   $("invTotalCards").textContent = "0";
@@ -74,9 +83,11 @@ async function saveInventory(e) {
     const count = parseInt(input.value) || 0;
     if (count > 0) {
       const price = parseFloat(input.dataset.price) || 0;
+      // Use doc ID as category key for backward-compatible linking
+      const categoryId = input.dataset.categoryId || input.dataset.category;
       if (count < 0) { showToast("عدد الكروت لا يمكن أن يكون سالباً", "warning"); formValid = false; return; }
-      if (!input.dataset.category) { showToast("فئة الكرت غير محددة", "warning"); formValid = false; return; }
-      entries.push({ category: input.dataset.category, count, price });
+      if (!categoryId) { showToast("فئة الكرت غير محددة", "warning"); formValid = false; return; }
+      entries.push({ category: categoryId, displayCategory: input.dataset.category, count, price });
     }
   });
   if (!formValid) return;
@@ -101,18 +112,24 @@ async function saveInventory(e) {
 
       const mergedMap = {};
       (invData.entries || []).forEach((e) => {
-        mergedMap[e.category] = (mergedMap[e.category] || 0) + (e.count || 0);
+        // Support both old (category name) and new (doc ID) formats
+        const key = e.category || "";
+        mergedMap[key] = (mergedMap[key] || 0) + (e.count || 0);
       });
       entries.forEach((e) => {
         mergedMap[e.category] = (mergedMap[e.category] || 0) + e.count;
       });
 
-      const newEntries = Object.entries(mergedMap).map(([category, count]) => ({ category, count }));
+      const newEntries = Object.entries(mergedMap)
+        .filter(([, count]) => count > 0)
+        .map(([category, count]) => ({ category, count }));
       const newTotalCards = newEntries.reduce((s, e) => s + e.count, 0);
       const newTotalValue = newEntries.reduce((s, e) => {
-        const p = inventoryCardPrices.find((p) => p.category === e.category)?.merchantPrice || 0;
+        const p = inventoryCardPrices.find((cp) => cp.id === e.category || cp.category === e.category)?.merchantPrice || 0;
         return s + e.count * p;
       }, 0);
+
+      const txnNotes = entries.map((e) => `${e.count} كارت فئة ${e.displayCategory || e.category}`).join("، ");
 
       if (invDoc.exists) {
         transaction.update(invRef, { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, updatedAt: now });
@@ -128,8 +145,8 @@ async function saveInventory(e) {
 
       const txnRef = db.collection("merchant_transactions").doc(merchantId).collection("items").doc();
       transaction.set(txnRef, {
-        type: "card_inventory_added", merchantId, amount: 0, date, time, createdBy: "admin",
-        notes: `إضافة كروت: ${entries.map((e) => `${e.count} كارت فئة ${e.category}`).join("، ")}`,
+        type: "card_inventory_added", merchantId, amount: totalValue, date, time, createdBy: "admin",
+        notes: `إضافة كروت: ${txnNotes}`,
         priceSnapshot: getPriceSnapshot(), metadata: { entries, totalCards, totalValue }, createdAt: now, updatedAt: now,
       });
 
@@ -175,40 +192,89 @@ function renderCardPriceList() {
   if (!container) return;
 
   if (!inventoryCardPrices.length) {
-    container.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:16px;">لا توجد فئات أسعار. أضف الفئة الأولى.</p>';
+    container.innerHTML = `
+      <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
+        <span style="flex:1.5;">الفئة</span>
+        <span style="width:90px;text-align:center;">سعر التاجر</span>
+        <span style="width:90px;text-align:center;">سعر البيع</span>
+        <span style="width:80px;text-align:center;">الحالة</span>
+        <span style="width:50px;text-align:center;">الترتيب</span>
+        <span style="width:30px;"></span>
+      </div>
+      <p style="text-align:center;color:var(--text-muted);padding:16px;">لا توجد فئات أسعار. أضف الفئة الأولى.</p>
+    `;
     return;
   }
 
-  container.innerHTML = inventoryCardPrices.map((p, i) => `
-    <div class="cp-row" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);" data-index="${i}">
-      <input type="text" class="cp-category" value="${escapeHtml(p.category)}" placeholder="اسم الفئة"
-        style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
-      <input type="number" class="cp-price" value="${p.merchantPrice || 0}" min="0" step="0.01" placeholder="السعر"
-        style="width:100px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+  const rowsHtml = inventoryCardPrices.map((p, i) => `
+    <div class="cp-row" data-id="${p.id || ""}" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);" data-index="${i}">
+      <input type="text" class="cp-category" value="${escapeHtml(p.category || "")}" placeholder="الفئة (مثال: 100)"
+        style="flex:1.5;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
+      <input type="number" class="cp-price" value="${p.merchantPrice || 0}" min="0" step="0.01" placeholder="سعر التاجر"
+        style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      <input type="number" class="cp-selling-price" value="${p.sellingPrice || 0}" min="0" step="0.01" placeholder="سعر البيع"
+        style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      <select class="cp-status" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);">
+        <option value="active" ${p.status !== "inactive" ? "selected" : ""}>نشط</option>
+        <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>غير نشط</option>
+      </select>
       <input type="number" class="cp-sort" value="${p.sortOrder || i}" min="0" placeholder="ترتيب"
-        style="width:60px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+        style="width:50px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
       <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="background:var(--danger);color:white;border:none;padding:6px 10px;border-radius:var(--radius-xs);cursor:pointer;">×</button>
     </div>
   `).join("");
+
+  container.innerHTML = `
+    <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
+      <span style="flex:1.5;">الفئة</span>
+      <span style="width:90px;text-align:center;">سعر التاجر</span>
+      <span style="width:90px;text-align:center;">سعر البيع</span>
+      <span style="width:80px;text-align:center;">الحالة</span>
+      <span style="width:50px;text-align:center;">الترتيب</span>
+      <span style="width:30px;"></span>
+    </div>
+    <div id="cpRowsContainer">${rowsHtml}</div>
+  `;
 }
 
 function addCardPriceRow() {
-  const container = $("cardPriceList");
-  if (!container) return;
+  let rowsContainer = document.getElementById("cpRowsContainer");
+  if (!rowsContainer) {
+    const container = $("cardPriceList");
+    if (!container) return;
+    container.innerHTML = `
+      <div class="cp-header" style="display:flex;font-weight:bold;padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:8px;font-size:13px;gap:8px;">
+        <span style="flex:1.5;">الفئة</span>
+        <span style="width:90px;text-align:center;">سعر التاجر</span>
+        <span style="width:90px;text-align:center;">سعر البيع</span>
+        <span style="width:80px;text-align:center;">الحالة</span>
+        <span style="width:50px;text-align:center;">الترتيب</span>
+        <span style="width:30px;"></span>
+      </div>
+      <div id="cpRowsContainer"></div>
+    `;
+    rowsContainer = document.getElementById("cpRowsContainer");
+  }
 
   const div = document.createElement("div");
   div.className = "cp-row";
   div.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);";
   div.innerHTML = `
-    <input type="text" class="cp-category" value="" placeholder="اسم الفئة"
-      style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
-    <input type="number" class="cp-price" value="0" min="0" step="0.01" placeholder="السعر"
-      style="width:100px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    <input type="text" class="cp-category" value="" placeholder="الفئة (مثال: 100)"
+      style="flex:1.5;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);" />
+    <input type="number" class="cp-price" value="0" min="0" step="0.01" placeholder="سعر التاجر"
+      style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    <input type="number" class="cp-selling-price" value="0" min="0" step="0.01" placeholder="سعر البيع"
+      style="width:90px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+    <select class="cp-status" style="width:80px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;background:var(--surface);color:var(--text);">
+      <option value="active" selected>نشط</option>
+      <option value="inactive">غير نشط</option>
+    </select>
     <input type="number" class="cp-sort" value="0" min="0" placeholder="ترتيب"
-      style="width:60px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
+      style="width:50px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:14px;text-align:center;background:var(--surface);color:var(--text);" />
     <button class="btn btn-sm" onclick="removeCardPriceRow(this)" style="background:var(--danger);color:white;border:none;padding:6px 10px;border-radius:var(--radius-xs);cursor:pointer;">×</button>
   `;
-  container.appendChild(div);
+  rowsContainer.appendChild(div);
 }
 
 function removeCardPriceRow(btn) {
@@ -222,28 +288,55 @@ async function saveCardPrices() {
   let hasErrors = false;
 
   rows.forEach((row) => {
+    const id = row.dataset.id || "";
     const category = row.querySelector(".cp-category")?.value?.trim();
     const merchantPrice = parseFloat(row.querySelector(".cp-price")?.value) || 0;
+    const sellingPrice = parseFloat(row.querySelector(".cp-selling-price")?.value) || 0;
+    const status = row.querySelector(".cp-status")?.value || "active";
     const sortOrder = parseInt(row.querySelector(".cp-sort")?.value) || 0;
 
     if (!category) { showToast("جميع فئات الأسعار يجب أن تحتوي على اسم", "warning"); hasErrors = true; return; }
-    if (merchantPrice < 0) { showToast("السعر لا يمكن أن يكون سالباً", "warning"); hasErrors = true; return; }
-    prices.push({ category, merchantPrice, sortOrder });
+    if (merchantPrice < 0 || sellingPrice < 0) { showToast("السعر لا يمكن أن يكون سالباً", "warning"); hasErrors = true; return; }
+    prices.push({ id, category, merchantPrice, sellingPrice, status, sortOrder });
   });
   if (hasErrors) return;
 
   if (!prices.length) { showToast("يرجى إضافة فئة سعر واحدة على الأقل", "warning"); return; }
 
   try {
-    const snap = await db.collection("merchant_card_prices").get();
     const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    prices.forEach((p) => {
-      const ref = db.collection("merchant_card_prices").doc();
-      batch.set(ref, p);
-    });
-    await batch.commit();
+    
+    // Get existing price docs to see if any need to be deleted
+    const snap = await db.collection("merchant_card_prices").get();
+    const newIds = prices.map(p => p.id).filter(id => id);
 
+    // Delete any doc that was in Firestore but is no longer in the list
+    snap.docs.forEach((d) => {
+      if (!newIds.includes(d.id)) {
+        batch.delete(d.ref);
+      }
+    });
+
+    // Add or update
+    prices.forEach((p) => {
+      let ref;
+      if (p.id) {
+        ref = db.collection("merchant_card_prices").doc(p.id);
+      } else {
+        ref = db.collection("merchant_card_prices").doc(); // Create new doc
+      }
+      const dataToSave = {
+        category: p.category,
+        merchantPrice: p.merchantPrice,
+        sellingPrice: p.sellingPrice,
+        status: p.status,
+        sortOrder: p.sortOrder,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      };
+      batch.set(ref, dataToSave, { merge: true });
+    });
+
+    await batch.commit();
     await loadInventoryPrices();
     if (typeof markAccountsDirty === "function") markAccountsDirty();
     $("cardPriceModal").classList.remove("open");

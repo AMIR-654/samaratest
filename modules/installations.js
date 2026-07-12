@@ -72,9 +72,19 @@ async function saveInstallation(e) {
       });
 
       const merchantRef = db.collection("merchants").doc(merchantId);
+      const merchantSnap = await transaction.get(merchantRef);
+      const mData = merchantSnap.exists ? merchantSnap.data() : {};
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const isSameMonth = (mData.monthlyStatsPeriod || "") === currentMonth;
+
       transaction.update(merchantRef, {
         installationCount: firebase.firestore.FieldValue.increment(1),
         currentBalance: firebase.firestore.FieldValue.increment(price),
+        // Monthly denormalized stats (reset automatically when month changes)
+        monthlyStatsPeriod: currentMonth,
+        monthlyInstallationsValue: isSameMonth
+          ? firebase.firestore.FieldValue.increment(price)
+          : price,
         updatedAt: now,
       });
 

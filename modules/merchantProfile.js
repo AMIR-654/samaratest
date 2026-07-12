@@ -1,4 +1,4 @@
-// ===== Merchant Accounting Screen — New ERP Design =====
+// ===== Merchant Accounting Screen =====
 
 let _profileMerchant = null;
 let _profileInventory = null;
@@ -7,11 +7,45 @@ let _profileTransactions = [];
 let _profileInstallations = [];
 let _profileUnsubscribers = [];
 
+let editCategoryRow = null;
+let editCategoryValue = "";
+
+// Month navigation: YYYY-MM string
+let _selectedMonth = new Date().toISOString().slice(0, 7);
+
+// ===== Month Navigation =====
+
+function changeAcctMonth(delta) {
+  const [y, m] = _selectedMonth.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  _selectedMonth = d.toISOString().slice(0, 7);
+  renderAcctMonthLabel();
+  renderAcctSummary();
+  renderAcctStatement();
+}
+
+function renderAcctMonthLabel() {
+  const el = document.getElementById("acctMonthLabel");
+  if (!el) return;
+  const [y, m] = _selectedMonth.split("-").map(Number);
+  const label = new Date(y, m - 1, 1).toLocaleDateString("ar-SA", { month: "long", year: "numeric" });
+  el.textContent = label;
+}
+
+function getSelectedMonthRange() {
+  const [y, m] = _selectedMonth.split("-").map(Number);
+  const start = new Date(y, m - 1, 1);
+  const end = new Date(y, m, 0);
+  return {
+    start: start.toISOString().split("T")[0],
+    end: end.toISOString().split("T")[0],
+  };
+}
+
 // ===== Open / Close =====
 
 async function openMerchantProfile(merchantId) {
   stopProfileListeners();
-
   _profileMerchant = merchantsCache.find((m) => m.id === merchantId);
   if (!_profileMerchant) return;
 
@@ -19,6 +53,9 @@ async function openMerchantProfile(merchantId) {
   $("merchantListView").style.display = "none";
   $("accountingScreenView").style.display = "block";
 
+  // Reset to current month on each open
+  _selectedMonth = new Date().toISOString().slice(0, 7);
+  renderAcctMonthLabel();
   renderAcctSkeleton();
   await renderAcctData();
   startProfileListeners(merchantId);
@@ -29,6 +66,8 @@ function backToMerchantList() {
   currentMerchantProfileId = null;
   _profileMerchant = null;
   _profileInventory = null;
+  editCategoryRow = null;
+  editCategoryValue = "";
   $("merchantListView").style.display = "block";
   $("accountingScreenView").style.display = "none";
 }
@@ -42,41 +81,104 @@ function startProfileListeners(merchantId) {
   const merchantUnsub = db.collection("merchants").doc(merchantId)
     .onSnapshot((snap) => {
       if (!snap.exists) return;
-      const data = { id: snap.id, ...snap.data() };
-      _profileMerchant = data;
+      _profileMerchant = { id: snap.id, ...snap.data() };
       const idx = merchantsCache.findIndex((m) => m.id === merchantId);
-      if (idx !== -1) merchantsCache[idx] = data;
+      if (idx !== -1) merchantsCache[idx] = _profileMerchant;
       renderAcctHeader();
       renderAcctSummary();
       renderAcctSettlement();
-    }, (err) => console.warn("[Profile] Merchant listener error:", err));
+    }, (err) => console.warn("[Profile] Merchant listener:", err));
   _profileUnsubscribers.push(merchantUnsub);
 
   const invUnsub = db.collection("merchant_inventory").doc(merchantId)
     .onSnapshot((snap) => {
-      if (!snap.exists) {
-        _profileInventory = null;
-      } else {
-        _profileInventory = { id: snap.id, ...snap.data() };
-      }
-      renderAcctSummary();
-      renderAcctPriceStrip();
+      _profileInventory = snap.exists ? { id: snap.id, ...snap.data() } : null;
       renderAcctTable();
-    }, (err) => console.warn("[Profile] Inventory listener error:", err));
+    }, (err) => console.warn("[Profile] Inventory listener:", err));
   _profileUnsubscribers.push(invUnsub);
+
+  const pricesUnsub = db.collection("merchant_card_prices")
+    .orderBy("sortOrder", "asc")
+    .onSnapshot((snap) => {
+      _profilePrices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      inventoryCardPrices = _profilePrices;
+      renderAcctTable();
+    }, (err) => console.warn("[Profile] Prices listener:", err));
+  _profileUnsubscribers.push(pricesUnsub);
+
+  const instUnsub = db.collection("merchant_installations")
+    .where("merchantId", "==", merchantId)
+    .orderBy("createdAt", "desc")
+    .onSnapshot((snap) => {
+      _profileInstallations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderAcctTable();
+      renderAcctInstallations();
+    }, (err) => console.warn("[Profile] Installations listener:", err));
+  _profileUnsubscribers.push(instUnsub);
+
+  const txnsUnsub = db.collection("merchant_transactions").doc(merchantId).collection("items")
+    .orderBy("createdAt", "desc")
+    .limit(300)
+    .onSnapshot((snap) => {
+      _profileTransactions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderAcctSummary();
+      renderAcctStatement();
+      // Denormalize monthly stats back to merchant doc for the list view
+      writeDenormalizedMonthlyStats(merchantId);
+    }, (err) => console.warn("[Profile] Transactions listener:", err));
+  _profileUnsubscribers.push(txnsUnsub);
+}
+
+// ===== Denormalize monthly stats to merchant doc (for list card display) =====
+
+async function writeDenormalizedMonthlyStats(merchantId) {
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const { start, end } = getSelectedMonthRange();
+
+  let cardsAdded = 0;
+  let cashCollected = 0;
+  let installationsValue = 0;
+
+  // Always compute for current month regardless of selected month navigator
+  const curStart = new Date().toISOString().slice(0, 8) + "01";
+  const [y, m] = currentMonth.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const curEnd = `${currentMonth}-${String(lastDay).padStart(2, "0")}`;
+
+  _profileTransactions.forEach((tx) => {
+    if (!tx.date || tx.date < `${currentMonth}-01` || tx.date > curEnd) return;
+    if (tx.type === "card_inventory_added") {
+      const meta = tx.metadata;
+      if (meta?.totalCards) cardsAdded += meta.totalCards;
+      else if (meta?.entries) cardsAdded += meta.entries.reduce((s, e) => s + (e.count || 0), 0);
+    } else if (tx.type === "cash_collection") {
+      cashCollected += Math.abs(tx.amount || 0);
+    } else if (tx.type === "installation") {
+      installationsValue += Math.abs(tx.amount || 0);
+    }
+  });
+
+  try {
+    await db.collection("merchants").doc(merchantId).update({
+      monthlyStatsPeriod: currentMonth,
+      monthlyCardsAdded: cardsAdded,
+      monthlyCashCollected: cashCollected,
+      monthlyInstallationsValue: installationsValue,
+    });
+  } catch (err) {
+    console.warn("[Profile] Failed to write monthly stats:", err.message);
+  }
 }
 
 // ===== Skeleton =====
 
 function renderAcctSkeleton() {
-  $("acctSummary").innerHTML = Array(6).fill(0).map(() =>
-    `<div class="acct-skeleton-card"><div class="acct-skeleton-line w40 h24"></div><div class="acct-skeleton-line w60"></div></div>`
+  const s = (w) => `<div class="acct-skeleton-line" style="width:${w};height:20px;background:var(--border);border-radius:4px;margin:4px 0;"></div>`;
+  $("acctSummary").innerHTML = [1,2,3].map(() =>
+    `<div style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">${s("40%")}${s("60%")}</div>`
   ).join("");
-  $("acctPriceStrip").style.display = "none";
-  $("acctTableBody").innerHTML = `<tr><td colspan="6"><div class="acct-skeleton-line w100 h40"></div></td></tr>`;
-  $("acctSettlement").innerHTML = `<div class="acct-skeleton"><div class="acct-skeleton-line w60"></div><div class="acct-skeleton-line w80"></div><div class="acct-skeleton-line w40"></div></div>`;
-  $("acctStatementTimeline").innerHTML = `<div class="acct-skeleton"><div class="acct-skeleton-line w80"></div><div class="acct-skeleton-line w60"></div><div class="acct-skeleton-line w40"></div></div>`;
-  $("acctInstallationsList").innerHTML = `<div class="acct-skeleton"><div class="acct-skeleton-line w80"></div><div class="acct-skeleton-line w60"></div></div>`;
+  $("acctTableBody").innerHTML = `<tr><td colspan="3" style="padding:32px;text-align:center;color:var(--text-muted);">جاري التحميل...</td></tr>`;
+  $("acctSettlement").innerHTML = `<div style="height:100px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-top:12px;"></div>`;
 }
 
 // ===== Load Data =====
@@ -84,27 +186,20 @@ function renderAcctSkeleton() {
 async function renderAcctData() {
   try {
     const m = _profileMerchant;
-    const [inv, txns, insts] = await Promise.all([
-      loadMerchantInventory(m.id).then((inv) => { _profileInventory = inv; return inv; }),
+    await Promise.all([
+      loadMerchantInventory(m.id).then((inv) => { _profileInventory = inv; }),
       loadInventoryPrices().then(() => { _profilePrices = inventoryCardPrices; }),
-      loadTransactionHistory(m.id, 200).then((txns) => { _profileTransactions = txns; return txns; }),
-      loadMerchantInstallations(m.id).then((insts) => { _profileInstallations = insts; return insts; }),
+      loadTransactionHistory(m.id, 300).then((txns) => { _profileTransactions = txns; }),
+      loadMerchantInstallations(m.id).then((insts) => { _profileInstallations = insts; }),
     ]);
     renderAcctHeader();
     renderAcctSummary();
-    renderAcctPriceStrip();
     renderAcctTable();
     renderAcctSettlement();
     renderAcctStatement();
     renderAcctInstallations();
   } catch (err) {
-    $("acctBody").innerHTML = `
-      <div class="merchant-error-state">
-        <div class="merchant-error-state-icon">⚠️</div>
-        <div class="merchant-error-state-text">خطأ في تحميل بيانات التاجر</div>
-        <div class="merchant-error-state-hint">${escapeHtml(err.message)}</div>
-        <button class="btn btn-primary" onclick="openMerchantProfile('${_profileMerchant.id}')">إعادة المحاولة</button>
-      </div>`;
+    console.error("[Profile] renderAcctData error:", err);
   }
 }
 
@@ -113,21 +208,18 @@ async function renderAcctData() {
 function renderAcctHeader() {
   const m = _profileMerchant;
   if (!m) return;
-
-  const initial = (m.name || "?").charAt(0);
   const statusLabel = m.status === "active" ? "نشط" : "غير نشط";
   const statusClass = m.status === "active" ? "active" : "disabled";
   const fbOk = m.firebaseAuthUid && m.firebaseAuthStatus === "active";
   const fbHtml = fbOk
     ? '<span style="color:#22c55e;">🟢 Firebase مفعل</span>'
-    : m.firebaseAuthUid
-      ? '<span style="color:#eab308;">🟡 يحتاج مزامنة</span>'
+    : m.firebaseAuthUid ? '<span style="color:#eab308;">🟡 يحتاج مزامنة</span>'
       : '<span style="color:#ef4444;">🔴 غير مفعل</span>';
   const lastAct = m.updatedAt
     ? (m.updatedAt.toDate ? m.updatedAt.toDate() : new Date(m.updatedAt)).toLocaleString("ar-EG")
     : "-";
 
-  $("acctAvatar").textContent = initial;
+  $("acctAvatar").textContent = (m.name || "?").charAt(0);
   $("acctName").textContent = m.name || "";
   $("acctStatusBadge").textContent = statusLabel;
   $("acctStatusBadge").className = "status-badge " + statusClass;
@@ -135,312 +227,465 @@ function renderAcctHeader() {
   $("acctPhone").innerHTML = `📞 ${escapeHtml(m.phone || "-")}`;
   $("acctFirebaseStatus").innerHTML = fbHtml;
   $("acctLastActivity").innerHTML = `🕐 ${lastAct}`;
-
-  // Set date range defaults
-  const today = new Date().toISOString().split("T")[0];
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
-  if (!$("acctDateFrom").value) $("acctDateFrom").value = thirtyDaysAgo;
-  if (!$("acctDateTo").value) $("acctDateTo").value = today;
 }
 
-// ===== Accounting Stats =====
+// ===== Monthly Summary Calculation (filtered by selected month) =====
 
-function getAccountingStats() {
-  const inv = _profileInventory;
-  const priceMap = new Map(_profilePrices.map((p) => [p.category, p.merchantPrice]));
-  const soldMap = new Map();
+function getFilteredMonthlySummary() {
+  const { start, end } = getSelectedMonthRange();
+  let totalCardsAdded = 0;
+  let totalCashCollected = 0;
+  let totalInstallationsValue = 0;
 
   _profileTransactions.forEach((tx) => {
-    if (tx.type === "card_settlement" && tx.metadata?.entries) {
-      tx.metadata.entries.forEach((e) => {
-        soldMap.set(e.category, (soldMap.get(e.category) || 0) + (e.count || 0));
-      });
+    if (!tx.date || tx.date < start || tx.date > end) return;
+    if (tx.type === "card_inventory_added") {
+      const meta = tx.metadata;
+      if (meta?.totalCards) totalCardsAdded += meta.totalCards;
+      else if (meta?.entries) totalCardsAdded += meta.entries.reduce((s, e) => s + (e.count || 0), 0);
+    } else if (tx.type === "cash_collection") {
+      totalCashCollected += Math.abs(tx.amount || 0);
+    } else if (tx.type === "installation") {
+      totalInstallationsValue += Math.abs(tx.amount || 0);
     }
   });
 
-  let grandRemaining = 0;
-  let grandSold = 0;
-  let grandTotalAdded = 0;
-  let grandTotalValue = 0;
-
-  const orderedCategories = ["5", "10", "20", "50", "100"];
-
-  const rows = orderedCategories.map((cat) => {
-    const invEntry = inv?.entries ? inv.entries.find((e) => e.category === cat) : null;
-    const remaining = invEntry?.count ?? 0;
-    const sold = soldMap.get(cat) || 0;
-    const added = remaining + sold;
-    const price = priceMap.get(cat) || 0;
-    const rowResult = sold * price;
-
-    grandRemaining += remaining;
-    grandSold += sold;
-    grandTotalAdded += added;
-    grandTotalValue += rowResult;
-
-    return { category: cat, added, sold, remaining, price, rowResult };
-  });
-
-  return { rows, grandRemaining, grandSold, grandTotalAdded, grandTotalValue };
+  return { totalCardsAdded, totalCashCollected, totalInstallationsValue };
 }
 
 // ===== Summary Dashboard =====
 
 function renderAcctSummary() {
-  const m = _profileMerchant;
-  if (!m) return;
-
-  const stats = getAccountingStats();
-  const totalCollections = m.totalCollections ?? 0;
-  const currentBalance = m.currentBalance ?? 0;
-  const installations = m.installationCount ?? 0;
+  if (!_profileMerchant) return;
+  const stats = getFilteredMonthlySummary();
+  const { start, end } = getSelectedMonthRange();
 
   $("acctSummary").innerHTML = `
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">📦</div>
-      <div class="acct-summary-value info">${stats.grandTotalAdded.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">إجمالي الكروت</div>
+    <div class="acct-summary-card" style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.15);">
+      <div class="acct-summary-icon" style="color:var(--primary);">📦</div>
+      <div class="acct-summary-value info">${stats.totalCardsAdded.toLocaleString("ar-SA")}</div>
+      <div class="acct-summary-label">كروت مضافة هذا الشهر</div>
     </div>
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">💳</div>
-      <div class="acct-summary-value info">${stats.grandSold.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">الكروت المباعة</div>
+    <div class="acct-summary-card" style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.15);">
+      <div class="acct-summary-icon" style="color:var(--success);">💵</div>
+      <div class="acct-summary-value positive">${stats.totalCashCollected.toLocaleString("ar-SA")} ج.م</div>
+      <div class="acct-summary-label">محصل نقداً هذا الشهر</div>
     </div>
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">📊</div>
-      <div class="acct-summary-value warning">${stats.grandRemaining.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">الكروت المتبقية</div>
+    <div class="acct-summary-card" style="background:rgba(139,92,246,0.05);border:1px solid rgba(139,92,246,0.15);">
+      <div class="acct-summary-icon" style="color:#8b5cf6;">🔧</div>
+      <div class="acct-summary-value purple">${stats.totalInstallationsValue.toLocaleString("ar-SA")} ج.م</div>
+      <div class="acct-summary-label">قيمة التركيبات هذا الشهر</div>
     </div>
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">💵</div>
-      <div class="acct-summary-value positive">${totalCollections.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">المبلغ المحصل</div>
-    </div>
-    <div class="acct-summary-card">
-      <div class="acct-summary-icon">🔧</div>
-      <div class="acct-summary-value purple">${installations.toLocaleString("ar-SA")}</div>
-      <div class="acct-summary-label">عدد التركيبات</div>
-    </div>`;
+  `;
 }
 
-// ===== Price Strip =====
+// ===== Accounting Stats (live inventory — NEVER affected by month) =====
 
-function renderAcctPriceStrip() {
-  const container = $("acctPriceStrip");
-  const scroll = $("acctPriceStripScroll");
-  if (!_profilePrices.length) {
-    container.style.display = "none";
-    return;
-  }
-  const priceMap = new Map(_profilePrices.map((p) => [p.category, p.merchantPrice]));
-  const invMap = new Map();
-  if (_profileInventory?.entries) {
-    _profileInventory.entries.forEach((e) => invMap.set(e.category, e.count));
-  }
-  const ordered = ["100", "50", "20", "10", "5"];
+function getAccountingStats() {
+  const inv = _profileInventory;
+  const categories = _profilePrices.map((p) => p.category);
 
-  container.style.display = "block";
-  scroll.innerHTML = ordered.map((cat) => {
-    const price = priceMap.get(cat) || 0;
-    const inv = invMap.get(cat) || 0;
-    return `
-      <div class="acct-price-tile">
-        <div class="acct-price-tile-category">${cat}</div>
-        <div class="acct-price-tile-price">${price.toLocaleString("ar-SA")} ج.م</div>
-        <div class="acct-price-tile-inventory">المتبقي: ${inv}</div>
-      </div>`;
-  }).join("");
+  // Also surface any inventory entries whose category isn't in prices
+  if (inv?.entries) {
+    inv.entries.forEach((e) => {
+      if (e.count > 0) {
+        const match = _profilePrices.find((p) => p.id === e.category || p.category === e.category);
+        const name = match ? match.category : e.category;
+        if (!categories.includes(name)) categories.push(name);
+      }
+    });
+  }
+
+  let grandCardsCount = 0;
+  let grandCategoryTotal = 0;
+
+  const rows = categories.map((cat) => {
+    const priceDoc = _profilePrices.find((p) => p.category === cat || p.id === cat);
+    // ALWAYS use merchantPrice — the category name is only a label
+    const price = priceDoc ? (priceDoc.merchantPrice || 0) : 0;
+    const docId = priceDoc ? priceDoc.id : cat;
+
+    const invEntry = inv?.entries?.find((e) => e.category === docId || e.category === cat);
+    const cardsCount = invEntry?.count ?? 0;
+    const rowTotal = cardsCount * price; // Merchant Price × Cards Count
+
+    grandCardsCount += cardsCount;
+    grandCategoryTotal += rowTotal;
+
+    return { category: cat, id: docId, price, cardsCount, rowTotal };
+  });
+
+  return { rows, grandCardsCount, grandCategoryTotal };
 }
 
 // ===== Accounting Table =====
 
 function renderAcctTable() {
+  const tbody = $("acctTableBody");
+  const tfoot = $("acctTableTotals");
+  if (!tbody) return;
+
   const stats = getAccountingStats();
-  const inv = _profileInventory;
 
-  if (!inv || !inv.entries || !inv.entries.length) {
-    $("acctTableBody").innerHTML = `<tr><td colspan="6" class="acct-table-empty">لا توجد كروت حالياً</td></tr>`;
-    $("acctTableTotals").innerHTML = "";
-    $("acctTableCount").textContent = "";
-    return;
-  }
+  let rowsHtml = stats.rows.map((row) => {
+    const isEditing = editCategoryRow === row.id;
+    let countCell;
 
-  const badgeColors = { "5": "#EF4444", "10": "#8B5CF6", "20": "#3B82F6", "50": "#0EA5E9", "100": "#10B981" };
+    if (isEditing) {
+      const numVal = parseInt(editCategoryValue) || 0;
+      const diff = numVal - row.cardsCount;
+      const diffText = diff >= 0 ? `+${diff}` : `${diff}`;
+      const diffColor = diff >= 0 ? "var(--success)" : "var(--danger)";
 
-  const rows = stats.rows.map((row) => {
-    const badgeColor = badgeColors[row.category] || "#233253";
+      countCell = `
+        <td style="background:rgba(59,130,246,0.1);padding:8px;vertical-align:middle;">
+          <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:4px;">
+            <input type="number" id="inlineEditInput" value="${editCategoryValue}"
+              oninput="handleInlineEditInput('${row.id}',this.value)"
+              style="width:72px;padding:4px 6px;border:1px solid var(--primary);border-radius:4px;text-align:center;background:var(--surface);color:var(--text);font-size:14px;" />
+            <button onclick="saveInlineEdit('${row.id}')" style="background:var(--success);color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:13px;">✓</button>
+            <button onclick="cancelInlineEdit()" style="background:var(--text-muted);color:white;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:13px;">×</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);text-align:center;">
+            السابق: ${row.cardsCount} &rarr; الجديد: ${numVal} &rarr;
+            الفرق: <span style="color:${diffColor};font-weight:700;">${diffText}</span>
+          </div>
+        </td>`;
+    } else {
+      countCell = `
+        <td class="num-cell" onclick="startInlineEdit('${row.id}',${row.cardsCount})"
+          title="اضغط للتعديل"
+          style="cursor:pointer;text-align:center;vertical-align:middle;font-weight:600;font-size:16px;">
+          ${row.cardsCount.toLocaleString("ar-EG")}
+        </td>`;
+    }
+
+    const displayTotal = isEditing ? (parseInt(editCategoryValue) || 0) * row.price : row.rowTotal;
+
     return `
-      <tr>
-        <td class="category-cell"><span style="background:${badgeColor};color:#fff;padding:3px 10px;border-radius:6px;font-weight:700;font-size:12px;">${row.category}</span></td>
-        <td class="num-cell">${row.added.toLocaleString("ar-SA")}</td>
-        <td class="num-cell">${row.sold.toLocaleString("ar-SA")}</td>
-        <td class="num-cell remaining-cell">${row.remaining.toLocaleString("ar-SA")}</td>
-        <td class="num-cell">${row.price.toLocaleString("ar-SA")}</td>
-        <td class="total-cell">${row.rowResult.toLocaleString("ar-SA")}</td>
+      <tr style="${isEditing ? "background:rgba(59,130,246,0.06);" : ""}">
+        <td class="category-cell" style="text-align:right;vertical-align:middle;padding:10px 12px;">
+          <div style="font-weight:700;font-size:14px;">فئة ${escapeHtml(row.category)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">سعر التاجر: ${row.price.toLocaleString("ar-SA")} ج.م</div>
+        </td>
+        ${countCell}
+        <td class="total-cell" style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;">
+          ${displayTotal.toLocaleString("ar-SA")} ج.م
+        </td>
       </tr>`;
   }).join("");
 
-  $("acctTableBody").innerHTML = rows;
-  $("acctTableTotals").innerHTML = `
-    <tr>
-      <td style="font-weight:700;">الإجمالي</td>
-      <td class="num-cell" style="font-weight:700;">${stats.grandTotalAdded.toLocaleString("ar-SA")}</td>
-      <td class="num-cell" style="font-weight:700;">${stats.grandSold.toLocaleString("ar-SA")}</td>
-      <td class="num-cell remaining-cell" style="font-weight:700;">${stats.grandRemaining.toLocaleString("ar-SA")}</td>
-      <td></td>
-      <td class="total-cell" style="font-weight:700;font-size:15px;">${stats.grandTotalValue.toLocaleString("ar-SA")}</td>
+  // Installations row — always inside the table
+  const instCount = _profileInstallations.length;
+  const instTotal = _profileInstallations.reduce((s, i) => s + (i.price || 0), 0);
+  rowsHtml += `
+    <tr onclick="openInstDetailsModal()" style="cursor:pointer;background:rgba(139,92,246,0.04);">
+      <td style="text-align:right;vertical-align:middle;padding:10px 12px;border-right:3px solid #8b5cf6;">
+        <div style="font-weight:700;font-size:14px;color:#8b5cf6;">🔧 التركيبات</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">اضغط لعرض التفاصيل</div>
+      </td>
+      <td style="text-align:center;vertical-align:middle;font-weight:600;font-size:15px;color:#8b5cf6;">
+        ${instCount.toLocaleString("ar-SA")} تركيب
+      </td>
+      <td style="text-align:center;vertical-align:middle;font-weight:700;font-size:15px;color:#8b5cf6;">
+        ${instTotal.toLocaleString("ar-SA")} ج.م
+      </td>
     </tr>`;
-  $("acctTableCount").textContent = `${stats.rows.length} فئات`;
+
+  tbody.innerHTML = rowsHtml || `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted);">لا توجد فئات أسعار. أضف فئات من إعدادات أسعار الكروت.</td></tr>`;
+
+  // Grand total row
+  let liveCardsCount = stats.grandCardsCount;
+  let liveCategoryTotal = stats.grandCategoryTotal;
+  if (editCategoryRow) {
+    const row = stats.rows.find((r) => r.id === editCategoryRow);
+    if (row) {
+      const n = parseInt(editCategoryValue) || 0;
+      liveCardsCount = stats.rows.reduce((s, r) => s + (r.id === editCategoryRow ? n : r.cardsCount), 0);
+      liveCategoryTotal = stats.rows.reduce((s, r) => s + (r.id === editCategoryRow ? n * r.price : r.rowTotal), 0);
+    }
+  }
+  const grandTotal = liveCategoryTotal + instTotal;
+
+  tfoot.innerHTML = `
+    <tr style="background:var(--surface-hover);border-top:2px solid var(--border);">
+      <td style="font-weight:800;font-size:14px;text-align:right;padding:12px;">الإجمالي العام</td>
+      <td style="font-weight:800;font-size:16px;text-align:center;color:var(--primary);">${liveCardsCount.toLocaleString("ar-SA")} كرت</td>
+      <td style="font-weight:800;font-size:17px;text-align:center;color:var(--primary);">${grandTotal.toLocaleString("ar-SA")} ج.م</td>
+    </tr>`;
 }
 
-// ===== Settlement Panel =====
+// ===== Inline Edit =====
+
+function startInlineEdit(rowId, currentCount) {
+  editCategoryRow = rowId;
+  editCategoryValue = String(currentCount);
+  renderAcctTable();
+  setTimeout(() => {
+    const inp = document.getElementById("inlineEditInput");
+    if (inp) { inp.focus(); inp.select(); }
+  }, 50);
+}
+
+function handleInlineEditInput(rowId, val) {
+  editCategoryValue = val;
+  renderAcctTable();
+}
+
+function cancelInlineEdit() {
+  editCategoryRow = null;
+  editCategoryValue = "";
+  renderAcctTable();
+}
+
+async function saveInlineEdit(rowId) {
+  const m = _profileMerchant;
+  if (!m) return;
+  const stats = getAccountingStats();
+  const row = stats.rows.find((r) => r.id === rowId);
+  if (!row) return;
+
+  const newVal = parseInt(editCategoryValue) ?? 0;
+  if (isNaN(newVal) || newVal < 0) { showToast("يرجى إدخال عدد صحيح", "warning"); return; }
+
+  const oldVal = row.cardsCount;
+  const diff = newVal - oldVal;
+  if (diff === 0) { cancelInlineEdit(); return; }
+
+  const priceDoc = _profilePrices.find((p) => p.id === rowId || p.category === row.category);
+  if (!priceDoc) { showToast("فئة السعر غير متوفرة", "error"); return; }
+
+  const merchantPrice = priceDoc.merchantPrice || 0;
+  const totalValueDiff = Math.abs(diff) * merchantPrice;
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  const date = new Date().toISOString().split("T")[0];
+  const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const txnType = diff > 0 ? "card_inventory_added" : "card_settlement";
+  const txnNotes = diff > 0
+    ? `إضافة كروت: ${diff} كارت فئة ${row.category}`
+    : `حساب كروت: ${Math.abs(diff)} كارت فئة ${row.category}`;
+
+  try {
+    await db.runTransaction(async (transaction) => {
+      const invRef = db.collection("merchant_inventory").doc(m.id);
+      const merchantRef = db.collection("merchants").doc(m.id);
+
+      const [invDoc, merchantDoc] = await Promise.all([
+        transaction.get(invRef),
+        transaction.get(merchantRef),
+      ]);
+
+      // Build new entries
+      const invData = invDoc.exists ? invDoc.data() : { entries: [] };
+      const entriesMap = {};
+      (invData.entries || []).forEach((e) => {
+        const key = _profilePrices.find((p) => p.category === e.category || p.id === e.category)?.id || e.category;
+        entriesMap[key] = e.count || 0;
+      });
+      entriesMap[rowId] = newVal;
+
+      const newEntries = Object.entries(entriesMap)
+        .filter(([, cnt]) => cnt > 0)
+        .map(([category, count]) => ({ category, count }));
+      const newTotalCards = newEntries.reduce((s, e) => s + e.count, 0);
+      const newTotalValue = newEntries.reduce((s, e) => {
+        const p = _profilePrices.find((cp) => cp.id === e.category || cp.category === e.category)?.merchantPrice || 0;
+        return s + e.count * p;
+      }, 0);
+
+      // Inventory doc
+      if (invDoc.exists) {
+        transaction.update(invRef, { entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, updatedAt: now });
+      } else {
+        transaction.set(invRef, { merchantId: m.id, entries: newEntries, totalCards: newTotalCards, totalValue: newTotalValue, createdAt: now, updatedAt: now });
+      }
+
+      // Merchant doc + monthly stats
+      const mData = merchantDoc.exists ? merchantDoc.data() : {};
+      const isSameMonth = (mData.monthlyStatsPeriod || "") === currentMonth;
+      const merchantUpdate = {
+        totalCards: newTotalCards,
+        totalCardValue: newTotalValue,
+        currentBalance: firebase.firestore.FieldValue.increment(diff > 0 ? totalValueDiff : -totalValueDiff),
+        updatedAt: now,
+        monthlyStatsPeriod: currentMonth,
+      };
+      if (diff > 0) {
+        merchantUpdate.monthlyCardsAdded = isSameMonth
+          ? firebase.firestore.FieldValue.increment(diff)
+          : diff;
+      } else {
+        merchantUpdate.totalSettlements = firebase.firestore.FieldValue.increment(totalValueDiff);
+      }
+      transaction.update(merchantRef, merchantUpdate);
+
+      // Transaction record
+      const txnRef = db.collection("merchant_transactions").doc(m.id).collection("items").doc();
+      transaction.set(txnRef, {
+        type: txnType, merchantId: m.id,
+        amount: diff > 0 ? totalValueDiff : -totalValueDiff,
+        date, time, createdBy: "admin", notes: txnNotes,
+        priceSnapshot: getPriceSnapshot(),
+        metadata: {
+          entries: [{ category: row.category, count: Math.abs(diff), price: merchantPrice }],
+          totalCards: Math.abs(diff), totalValue: totalValueDiff,
+        },
+        createdAt: now, updatedAt: now,
+      });
+
+      // Audit
+      const auditRef = db.collection("merchant_audit_logs").doc();
+      transaction.set(auditRef, {
+        action: "create", collection: txnType, docId: m.id,
+        oldValue: { count: oldVal }, newValue: { count: newVal },
+        performedBy: "admin", reason: txnNotes,
+        timestamp: now, date, time,
+      });
+
+      // Notification
+      const notifRef = db.collection("merchant_notifications").doc();
+      transaction.set(notifRef, {
+        merchantId: m.id, type: txnType,
+        title: diff > 0 ? "إضافة كروت" : "حساب كروت",
+        message: txnNotes, read: false, createdAt: now,
+      });
+    });
+
+    cancelInlineEdit();
+    showToast("✅ تم حفظ التعديل", "success");
+  } catch (err) {
+    showToast("خطأ: " + err.message, "error");
+  }
+}
+
+// ===== Cash Collection =====
 
 function renderAcctSettlement() {
   const m = _profileMerchant;
   if (!m) return;
-
-  const totalSales = (m.totalSettlements ?? 0);
-  const totalCollections = (m.totalCollections ?? 0);
-  const remainingAmount = totalSales - totalCollections;
-  const currentBalance = m.currentBalance ?? 0;
+  const totalCollections = m.totalCollections ?? 0;
 
   $("acctSettlement").innerHTML = `
-    <div class="acct-settlement-grid">
-      <div class="acct-settlement-item">
-        <div class="acct-settlement-label">إجمالي المبيعات</div>
-        <div class="acct-settlement-value" style="color:var(--danger);">${totalSales.toLocaleString("ar-SA")} ج.م</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;margin-top:12px;">
+      <h4 style="margin:0 0 12px;font-size:15px;">💵 تسجيل تحصيل نقدي</h4>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;text-align:center;">
+        <div style="background:var(--surface-hover);padding:8px;border-radius:var(--radius-sm);">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">المبلغ المحصل السابق</div>
+          <div style="font-weight:700;font-size:15px;">${totalCollections.toLocaleString("ar-SA")} ج.م</div>
+        </div>
+        <div style="background:var(--surface-hover);padding:8px;border-radius:var(--radius-sm);">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">المبلغ الجديد</div>
+          <div id="newCollectVal" style="font-weight:700;font-size:15px;color:var(--success);">${totalCollections.toLocaleString("ar-SA")} ج.م</div>
+        </div>
+        <div style="background:var(--surface-hover);padding:8px;border-radius:var(--radius-sm);">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">الفرق</div>
+          <div id="diffCollectVal" style="font-weight:700;font-size:15px;color:var(--primary);">+0 ج.م</div>
+        </div>
       </div>
-      <div class="acct-settlement-item">
-        <div class="acct-settlement-label">إجمالي المستلم</div>
-        <div class="acct-settlement-value" style="color:var(--success);">${totalCollections.toLocaleString("ar-SA")} ج.م</div>
-      </div>
-      <div class="acct-settlement-item">
-        <div class="acct-settlement-label">المبلغ المتبقي</div>
-        <div class="acct-settlement-value" style="color:${remainingAmount >= 0 ? "var(--warning)" : "var(--danger)"};">${remainingAmount.toLocaleString("ar-SA")} ج.م</div>
-      </div>
-      <div class="acct-settlement-item">
-        <div class="acct-settlement-label">الرصيد الحالي</div>
-        <div class="acct-settlement-value" style="font-size:24px;color:${currentBalance >= 0 ? "var(--success)" : "var(--danger)"};">${currentBalance.toLocaleString("ar-SA")} ج.م</div>
-      </div>
-    </div>
-    <div class="acct-settlement-input-row">
-      <input type="number" id="settlementReceiveInput" class="acct-settlement-input" placeholder="المبلغ المستلم" min="0" step="0.01" oninput="updateAcctSettlementHint()" />
-    </div>
-    <div class="acct-settlement-hint" id="acctSettlementHint"></div>
-    <button class="acct-action-btn acct-action-collect" onclick="saveProfileSettlement()" style="width:100%;">
-      💾 حفظ التسوية
-    </button>`;
+      <input type="number" id="settlementReceiveInput" placeholder="أدخل المبلغ المحصل نقداً" min="0" step="0.01"
+        oninput="updateAcctSettlementHint()"
+        style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:15px;background:var(--surface);color:var(--text);margin-bottom:10px;box-sizing:border-box;" />
+      <button onclick="saveProfileSettlement()"
+        style="width:100%;padding:12px;background:var(--success);color:white;border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:700;cursor:pointer;">
+        💾 حفظ التحصيل النقدي
+      </button>
+    </div>`;
 }
 
 function updateAcctSettlementHint() {
+  const m = _profileMerchant;
+  if (!m) return;
   const receive = parseFloat($("settlementReceiveInput")?.value) || 0;
-  const hint = $("acctSettlementHint");
-  if (receive > 0) {
-    const m = _profileMerchant;
-    const newBalance = (m?.currentBalance ?? 0) - receive;
-    hint.textContent = `المتبقي بعد التسوية: ${newBalance.toLocaleString("ar-SA")} ج.م`;
-    hint.style.color = newBalance >= 0 ? "var(--success)" : "var(--danger)";
-  } else {
-    hint.textContent = "";
-  }
+  const prev = m.totalCollections ?? 0;
+  const newEl = $("newCollectVal");
+  const diffEl = $("diffCollectVal");
+  if (newEl) newEl.textContent = `${(prev + receive).toLocaleString("ar-SA")} ج.م`;
+  if (diffEl) diffEl.textContent = `+${receive.toLocaleString("ar-SA")} ج.م`;
 }
 
 async function saveProfileSettlement() {
   const m = _profileMerchant;
   if (!m) return;
+  const receive = parseFloat($("settlementReceiveInput")?.value) || 0;
+  if (receive <= 0) { showToast("يرجى إدخال مبلغ التحصيل", "warning"); return; }
+  if (!confirm(`تأكيد تسجيل تحصيل نقدي بقيمة ${receive.toLocaleString("ar-SA")} ج.م؟`)) return;
 
-  const receiveAmount = parseFloat($("settlementReceiveInput")?.value) || 0;
-  if (receiveAmount <= 0) {
-    showToast("يرجى إدخال المبلغ المستلم", "warning");
-    return;
-  }
-  if (receiveAmount > m.currentBalance) {
-    if (!confirm(`المبلغ المستلم (${receiveAmount.toLocaleString("ar-SA")}) أكبر من الرصيد المتبقي (${(m.currentBalance || 0).toLocaleString("ar-SA")}). هل تتابع؟`)) return;
-  }
-  if (!confirm(`تأكيد تسوية بقيمة ${receiveAmount.toLocaleString("ar-SA")} ج.م؟`)) return;
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  const date = new Date().toISOString().split("T")[0];
+  const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+  const currentMonth = new Date().toISOString().slice(0, 7);
 
   try {
-    const now = firebase.firestore.FieldValue.serverTimestamp();
-    const date = new Date().toISOString().split("T")[0];
-    const time = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
-    const newBalance = (m.currentBalance || 0) - receiveAmount;
-
     await db.runTransaction(async (transaction) => {
       const merchantRef = db.collection("merchants").doc(m.id);
+      const merchantDoc = await transaction.get(merchantRef);
+      const mData = merchantDoc.exists ? merchantDoc.data() : {};
+      const isSameMonth = (mData.monthlyStatsPeriod || "") === currentMonth;
 
       transaction.update(merchantRef, {
-        totalCollections: firebase.firestore.FieldValue.increment(receiveAmount),
-        currentBalance: firebase.firestore.FieldValue.increment(-receiveAmount),
+        totalCollections: firebase.firestore.FieldValue.increment(receive),
+        currentBalance: firebase.firestore.FieldValue.increment(-receive),
         updatedAt: now,
+        monthlyStatsPeriod: currentMonth,
+        monthlyCashCollected: isSameMonth
+          ? firebase.firestore.FieldValue.increment(receive)
+          : receive,
       });
 
       const txnRef = db.collection("merchant_transactions").doc(m.id).collection("items").doc();
       transaction.set(txnRef, {
-        type: "cash_collection",
-        merchantId: m.id,
-        amount: -receiveAmount,
-        date,
-        time,
-        createdBy: "admin",
-        notes: `تسوية نقدية: ${receiveAmount.toLocaleString("ar-SA")} ج.م`,
-        metadata: { receiveAmount, balanceBefore: m.currentBalance, balanceAfter: newBalance },
-        createdAt: now,
-        updatedAt: now,
+        type: "cash_collection", merchantId: m.id, amount: -receive,
+        date, time, createdBy: "admin",
+        notes: `استلام نقدي: ${receive.toLocaleString("ar-SA")} ج.م`,
+        metadata: { receiveAmount: receive, balanceBefore: m.currentBalance },
+        createdAt: now, updatedAt: now,
       });
 
       const auditRef = db.collection("merchant_audit_logs").doc();
       transaction.set(auditRef, {
-        action: "create",
-        collection: "merchant_settlement",
-        docId: m.id,
-        oldValue: { currentBalance: m.currentBalance, totalCollections: m.totalCollections || 0 },
-        newValue: { currentBalance: newBalance, totalCollections: (m.totalCollections || 0) + receiveAmount },
-        performedBy: "admin",
-        reason: "تسوية نقدية",
-        timestamp: now,
-        date,
-        time,
+        action: "create", collection: "merchant_transactions", docId: txnRef.id,
+        oldValue: { totalCollections: m.totalCollections || 0 },
+        newValue: { totalCollections: (m.totalCollections || 0) + receive },
+        performedBy: "admin", reason: "تحصيل نقدي", timestamp: now, date, time,
       });
 
       const notifRef = db.collection("merchant_notifications").doc();
       transaction.set(notifRef, {
-        merchantId: m.id,
-        type: "settlement",
-        title: "تسوية نقدية",
-        message: `تم استلام ${receiveAmount.toLocaleString("ar-SA")} ج.م`,
-        read: false,
-        createdAt: now,
+        merchantId: m.id, type: "cash_collection",
+        title: "استلام نقدي",
+        message: `تم استلام ${receive.toLocaleString("ar-SA")} ج.م`,
+        read: false, createdAt: now,
       });
     });
 
     $("settlementReceiveInput").value = "";
-    await loadMerchants();
-    markAccountsDirty();
-    await refreshAccountsUI();
-    showToast(`✅ تم حفظ التسوية بنجاح (${receiveAmount.toLocaleString("ar-SA")} ج.م)`, "success");
+    showToast(`✅ تم تسجيل التحصيل (${receive.toLocaleString("ar-SA")} ج.م)`, "success");
   } catch (err) {
-    showToast("خطأ في حفظ التسوية: " + err.message, "error");
+    showToast("خطأ: " + err.message, "error");
   }
 }
 
-// ===== Account Statement (Timeline) =====
+// ===== Account Statement =====
 
 function renderAcctStatement() {
   const container = $("acctStatementTimeline");
-  let txns = _profileTransactions || [];
+  if (!container) return;
 
-  // Filter by type
-  const typeFilter = $("stmtFilterType")?.value;
-  if (typeFilter) {
-    txns = txns.filter((t) => t.type === typeFilter);
-  }
+  const { start, end } = getSelectedMonthRange();
+  const typeFilter = $("stmtFilterType")?.value || "";
+
+  let txns = (_profileTransactions || []).filter((t) => {
+    const dateOk = t.date && t.date >= start && t.date <= end;
+    const typeOk = !typeFilter || t.type === typeFilter;
+    return dateOk && typeOk;
+  });
 
   if (!txns.length) {
-    container.innerHTML = `<div class="acct-statement-empty">لا توجد معاملات</div>`;
+    container.innerHTML = `<div class="acct-statement-empty">لا توجد معاملات للشهر المختار</div>`;
     return;
   }
 
-  // Group by date
   const groups = {};
   txns.forEach((t) => {
     const d = t.date || "بدون تاريخ";
@@ -448,21 +693,21 @@ function renderAcctStatement() {
     groups[d].push(t);
   });
 
-  const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-
   const labels = {
-    card_inventory_added: { label: "كروت", icon: "📦", color: "#3B82F6" },
-    card_settlement: { label: "حساب كروت", icon: "🧮", color: "#EF4444" },
-    cash_collection: { label: "استلام نقدي", icon: "💵", color: "#10B981" },
-    installation: { label: "تركيب", icon: "🔧", color: "#8B5CF6" },
-    adjustment: { label: "تعديل", icon: "✏️", color: "#F59E0B" },
+    card_inventory_added: { label: "كروت عهدة", icon: "📦", color: "#3B82F6" },
+    card_settlement:      { label: "حساب كروت", icon: "🧮", color: "#EF4444" },
+    cash_collection:      { label: "استلام نقدي", icon: "💵", color: "#10B981" },
+    installation:         { label: "تركيب",       icon: "🔧", color: "#8B5CF6" },
+    adjustment:           { label: "تعديل",       icon: "✏️", color: "#F59E0B" },
   };
 
-  container.innerHTML = sortedDates.map((date) => `
+  container.innerHTML = Object.keys(groups).sort((a, b) => b.localeCompare(a)).map((date) => `
     <div class="acct-statement-day">
       <div class="acct-statement-day-header">${date}</div>
       ${groups[date].map((t) => {
         const info = labels[t.type] || { label: t.type, icon: "📋", color: "#64748B" };
+        const amt = Math.abs(t.amount || 0);
+        const isPos = t.type === "card_inventory_added" || t.type === "installation";
         return `
           <div class="acct-statement-item">
             <div class="acct-statement-item-icon" style="background:${info.color}20;color:${info.color};">${info.icon}</div>
@@ -470,74 +715,138 @@ function renderAcctStatement() {
               <div class="acct-statement-item-type">${info.label}</div>
               <div class="acct-statement-item-notes">${escapeHtml(t.notes || "")}</div>
             </div>
-            <div class="acct-statement-item-amount" style="color:${(t.amount || 0) < 0 ? "var(--danger)" : "var(--success)"};">${(t.amount || 0).toLocaleString("ar-SA")} ج.م</div>
+            <div class="acct-statement-item-amount" style="color:${isPos ? "var(--success)" : "var(--danger)"};font-weight:700;">
+              ${isPos ? "+" : "-"}${amt.toLocaleString("ar-SA")} ج.م
+            </div>
           </div>`;
       }).join("")}
-    </div>
-  `).join("");
+    </div>`).join("");
 }
 
 function printAcctStatement() {
-  const merchant = _profileMerchant;
-  if (!merchant) return;
-
-  const printWin = window.open("", "_blank", "width=800,height=600");
-  printWin.document.write(`
-    <html dir="rtl">
-    <head><title>كشف حساب - ${merchant.name}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; padding: 40px; }
-      h1 { font-size: 20px; margin-bottom: 4px; }
-      .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
-      table { width: 100%; border-collapse: collapse; font-size: 13px; }
-      th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-      th { background: #f5f5f5; }
-      .total { font-weight: bold; font-size: 15px; margin-top: 16px; }
-      @media print { body { padding: 20px; } }
-    </style>
-    </head>
-    <body>
-      <h1>كشف حساب التاجر: ${escapeHtml(merchant.name)}</h1>
-      <div class="meta">الهاتف: ${escapeHtml(merchant.phone || "-")} | التاريخ: ${new Date().toLocaleDateString("ar-SA")}</div>
-      ${document.getElementById("acctStatementTimeline")?.innerHTML || ""}
-    </body>
-    </html>
-  `);
-  printWin.document.close();
-  setTimeout(() => printWin.print(), 500);
+  const m = _profileMerchant;
+  if (!m) return;
+  const win = window.open("", "_blank", "width=800,height=600");
+  win.document.write(`<html dir="rtl"><head><title>كشف حساب - ${m.name}</title>
+    <style>body{font-family:system-ui,sans-serif;padding:32px;}h1{font-size:18px;}table{width:100%;border-collapse:collapse;font-size:13px;}th,td{border:1px solid #ddd;padding:8px;text-align:center;}th{background:#f5f5f5;}</style>
+    </head><body><h1>كشف حساب: ${escapeHtml(m.name)}</h1>
+    <p style="color:#666;font-size:12px;">الهاتف: ${escapeHtml(m.phone || "-")} | التاريخ: ${new Date().toLocaleDateString("ar-SA")}</p>
+    ${document.getElementById("acctStatementTimeline")?.innerHTML || ""}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
 }
 
-// ===== Installations =====
+// ===== Installations Modal =====
+
+function openInstDetailsModal() {
+  renderAcctInstallations();
+  $("instDetailsModal").classList.add("open");
+}
 
 function renderAcctInstallations() {
-  const container = $("acctInstallationsList");
+  const container = $("instDetailsList");
+  if (!container) return;
   const insts = _profileInstallations || [];
 
   if (!insts.length) {
-    container.innerHTML = `<div class="acct-statement-empty">لا توجد تركيبات</div>`;
+    container.innerHTML = `<p style="text-align:center;padding:24px;color:var(--text-muted);">لا توجد تركيبات مسجلة</p>`;
     return;
   }
 
-  container.innerHTML = insts.slice(0, 10).map((inst) => `
-    <div class="acct-installation-item">
-      <span style="font-size:16px;">🔧</span>
-      <div class="acct-installation-customer">${escapeHtml(inst.customerName || "")}</div>
-      <div class="acct-installation-meta">
-        <span>${inst.region || ""}</span>
-        <span>${inst.date || ""}</span>
+  container.innerHTML = insts.map((inst) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:var(--surface-hover);border-radius:var(--radius-sm);border:1px solid var(--border);">
+      <div style="display:flex;flex-direction:column;gap:3px;text-align:right;">
+        <span style="font-weight:700;">${escapeHtml(inst.customerName || "بدون اسم")}</span>
+        <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(inst.region || "")} | ${inst.date || ""}</span>
+        ${inst.notes ? `<span style="font-size:11px;color:var(--text-muted);font-style:italic;">${escapeHtml(inst.notes)}</span>` : ""}
       </div>
-      <div class="acct-installation-price">${(inst.price || 0).toLocaleString("ar-SA")} ج.م</div>
-    </div>
-  `).join("");
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-weight:700;color:var(--success);">${(inst.price || 0).toLocaleString("ar-SA")} ج.م</span>
+        <button onclick="deleteInstallation('${inst.id}')"
+          style="background:var(--danger);color:white;border:none;padding:4px 8px;border-radius:var(--radius-xs);cursor:pointer;font-size:12px;">حذف</button>
+      </div>
+    </div>`).join("");
 }
 
-// ===== Refresh (called from date range change) =====
+// ===== Refresh (month change) =====
 
-async function refreshAccountingScreen() {
-  if (!currentMerchantProfileId) return;
-  const txns = await loadTransactionHistory(currentMerchantProfileId, 200);
-  _profileTransactions = txns;
+function refreshAccountingScreen() {
+  renderAcctSummary();
   renderAcctStatement();
+}
+
+// ===== Reset Merchant =====
+
+async function confirmResetMerchant() {
+  if (!currentMerchantProfileId) return;
+  if (!confirm(
+    "هل أنت متأكد من إعادة تعيين التاجر؟\n\nسيتم مسح:\n• العهدة (الكروت)\n• التركيبات\n• سجل المعاملات\n• إجماليات المحاسبة\n\n⚠️ لن يتم حذف:\n• حساب التاجر\n• بيانات تسجيل الدخول\n• معلوماته الشخصية\n• أسعار الكروت"
+  )) return;
+
+  try {
+    const id = currentMerchantProfileId;
+    const batch = db.batch();
+
+    batch.update(db.collection("merchants").doc(id), {
+      totalCards: 0, totalCardValue: 0, totalSettlements: 0,
+      totalCollections: 0, currentBalance: 0, installationCount: 0,
+      monthlyCardsAdded: 0, monthlyCashCollected: 0, monthlyInstallationsValue: 0,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const invSnap = await db.collection("merchant_inventory").get();
+    invSnap.docs.forEach((d) => {
+      if (d.data().merchantId === id)
+        batch.update(d.ref, { entries: [], totalCards: 0, totalValue: 0, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    });
+
+    const instSnap = await db.collection("merchant_installations").where("merchantId", "==", id).get();
+    instSnap.docs.forEach((d) => batch.delete(d.ref));
+
+    const txSnap = await db.collection("merchant_transactions").doc(id).collection("items").get();
+    txSnap.docs.forEach((d) => batch.delete(d.ref));
+
+    await batch.commit();
+    showToast("✅ تم إعادة تعيين التاجر", "success");
+    await loadMerchants();
+  } catch (err) {
+    showToast("خطأ: " + err.message, "error");
+  }
+}
+
+// ===== Audit Log =====
+
+async function showAcctAuditLog() {
+  if (!currentMerchantProfileId) return;
+  const entries = await loadAuditLog(currentMerchantProfileId, 30);
+  const container = $("acctStatementTimeline");
+  if (!entries.length) { container.innerHTML = `<div class="acct-statement-empty">لا توجد عمليات</div>`; return; }
+  const labels = { create: "إنشاء", update: "تعديل", archive: "أرشفة", delete: "حذف" };
+  container.innerHTML = entries.map((e) => `
+    <div class="acct-statement-item">
+      <div class="acct-statement-item-icon" style="background:var(--primary)22;color:var(--primary);">📋</div>
+      <div class="acct-statement-item-body">
+        <div class="acct-statement-item-type">${labels[e.action] || e.action}</div>
+        <div class="acct-statement-item-notes">${e.collection || ""} ${e.reason ? "— " + e.reason : ""}</div>
+      </div>
+      <div class="acct-statement-item-amount" style="font-size:11px;color:var(--text-muted);font-weight:400;">${e.date || ""} ${e.time || ""}</div>
+    </div>`).join("");
+}
+
+// ===== Archive =====
+
+async function toggleMerchantArchive() {
+  const m = _profileMerchant;
+  if (!m) return;
+  if (m.status === "archived") { showToast("التاجر مؤرشف بالفعل", "warning"); return; }
+  if (!confirm(`أرشفة التاجر "${m.name}"؟`)) return;
+  try {
+    await db.collection("merchants").doc(m.id).update({ status: "archived", updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    await recordAudit("archive", "merchants", m.id, { status: m.status }, { status: "archived" }, "أرشفة");
+    await loadMerchants();
+    showToast(`✅ تم أرشفة "${m.name}"`, "success");
+    backToMerchantList();
+  } catch (err) { showToast("خطأ: " + err.message, "error"); }
 }
 
 // ===== More Menu =====
@@ -548,73 +857,27 @@ function toggleAcctMoreMenu() {
   menu.classList.toggle("open");
   if (!isOpen) {
     const close = (e) => {
-      if (!e.target.closest(".acct-action-more-wrap")) {
-        menu.classList.remove("open");
-        document.removeEventListener("click", close);
-      }
+      if (!e.target.closest(".acct-action-more-wrap")) { menu.classList.remove("open"); document.removeEventListener("click", close); }
     };
     setTimeout(() => document.addEventListener("click", close), 0);
   }
 }
 
-async function showAcctAuditLog() {
-  if (!currentMerchantProfileId) return;
-  const entries = await loadAuditLog(currentMerchantProfileId, 30);
-  const container = $("acctStatementTimeline");
-  // Temporarily show audit in the statement area
-  if (!entries.length) {
-    container.innerHTML = `<div class="acct-statement-empty">لا توجد عمليات مسجلة</div>`;
-    return;
-  }
-  container.innerHTML = entries.map((e) => {
-    const actionLabels = { create: "إنشاء", update: "تعديل", archive: "أرشفة", delete: "حذف", restore: "استعادة" };
-    const label = actionLabels[e.action] || e.action;
-    return `
-      <div class="acct-statement-item">
-        <div class="acct-statement-item-icon" style="background:var(--primary)20;color:var(--primary);">📋</div>
-        <div class="acct-statement-item-body">
-          <div class="acct-statement-item-type">${label}</div>
-          <div class="acct-statement-item-notes">${e.collection || ""} ${e.reason ? "— " + e.reason : ""}</div>
-        </div>
-        <div class="acct-statement-item-amount" style="font-size:11px;color:var(--text-muted);font-weight:400;">${e.date || ""} ${e.time || ""}</div>
-      </div>`;
-  }).join("");
-  showToast("تم عرض آخر 30 عملية", "info");
-}
-
-async function toggleMerchantArchive() {
-  if (!currentMerchantProfileId) return;
-  const m = _profileMerchant;
-  if (!m) return;
-  if (m.status === "archived") {
-    showToast("التاجر مؤرشف بالفعل", "warning");
-    return;
-  }
-  if (confirm(`هل تريد أرشفة التاجر "${m.name}"؟ سيتم إخفاؤه من القائمة الرئيسية مع الاحتفاظ بجميع بياناته.`)) {
-    try {
-      await db.collection("merchants").doc(m.id).update({
-        status: "archived",
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      await recordAudit("archive", "merchants", m.id, { status: m.status }, { status: "archived" }, "أرشفة التاجر");
-      await loadMerchants();
-      showToast(`✅ تم أرشفة "${m.name}" بنجاح`, "success");
-      backToMerchantList();
-    } catch (err) {
-      showToast("خطأ: " + err.message, "error");
-    }
-  }
-}
-
 // ===== Window exports =====
-
 window.openMerchantProfile = openMerchantProfile;
 window.backToMerchantList = backToMerchantList;
-window.saveProfileSettlement = saveProfileSettlement;
-window.toggleAcctMoreMenu = toggleAcctMoreMenu;
+window.changeAcctMonth = changeAcctMonth;
 window.refreshAccountingScreen = refreshAccountingScreen;
+window.saveProfileSettlement = saveProfileSettlement;
+window.updateAcctSettlementHint = updateAcctSettlementHint;
+window.toggleAcctMoreMenu = toggleAcctMoreMenu;
 window.showAcctAuditLog = showAcctAuditLog;
 window.toggleMerchantArchive = toggleMerchantArchive;
-window.updateAcctSettlementHint = updateAcctSettlementHint;
 window.printAcctStatement = printAcctStatement;
 window.renderAcctStatement = renderAcctStatement;
+window.confirmResetMerchant = confirmResetMerchant;
+window.startInlineEdit = startInlineEdit;
+window.handleInlineEditInput = handleInlineEditInput;
+window.cancelInlineEdit = cancelInlineEdit;
+window.saveInlineEdit = saveInlineEdit;
+window.openInstDetailsModal = openInstDetailsModal;

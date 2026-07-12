@@ -713,9 +713,10 @@
               </div>
             </div>
             <div class="acct-header-right">
-              <div class="acct-date-range">
-                <input type="date" id="acctDateFrom" onchange="refreshAccountingScreen()" />
-                <input type="date" id="acctDateTo" onchange="refreshAccountingScreen()" />
+              <div class="acct-month-nav" id="acctMonthNav">
+                <button class="acct-month-btn" onclick="changeAcctMonth(-1)">◀</button>
+                <span id="acctMonthLabel" style="font-weight:700;font-size:14px;min-width:100px;text-align:center;"></span>
+                <button class="acct-month-btn" onclick="changeAcctMonth(1)">▶</button>
               </div>
               <button class="acct-header-edit-btn" onclick="openMerchantModal(currentMerchantProfileId)">✏️ تعديل</button>
             </div>
@@ -727,12 +728,6 @@
           <!-- Summary Dashboard -->
           <div class="acct-summary" id="acctSummary"></div>
 
-          <!-- Price Strip -->
-          <div class="acct-price-strip" id="acctPriceStrip" style="display:none;">
-            <div class="acct-price-strip-title">أسعار الفئات</div>
-            <div class="acct-price-strip-scroll" id="acctPriceStripScroll"></div>
-          </div>
-
           <!-- Accounting Table -->
           <div class="acct-table-section" id="acctTableSection">
             <div class="acct-table-header">
@@ -743,12 +738,9 @@
               <table class="acct-table">
                 <thead>
                   <tr>
-                    <th>الفئة</th>
-                    <th>العهدة</th>
-                    <th>المباع</th>
-                    <th>المتبقي</th>
-                    <th>سعر التاجر</th>
-                    <th>الناتج</th>
+                    <th style="text-align:right;">الفئة</th>
+                    <th style="text-align:center;">عدد الكروت</th>
+                    <th style="text-align:center;">إجمالي الفئة</th>
                   </tr>
                 </thead>
                 <tbody id="acctTableBody"></tbody>
@@ -778,26 +770,12 @@
             <div id="acctStatementTimeline" class="acct-statement-timeline"></div>
           </div>
 
-          <!-- Installations Section -->
-          <div class="acct-installations-section" id="acctInstallationsSection">
-            <div class="acct-statement-header">
-              <span class="acct-statement-title">آخر التركيبات</span>
-              <button class="btn btn-sm btn-primary" onclick="openInstallationModal(currentMerchantProfileId)">+ إضافة تركيب</button>
-            </div>
-            <div id="acctInstallationsList"></div>
-          </div>
         </div>
 
         <!-- Action Buttons -->
         <div class="acct-actions" id="acctActions">
-          <button class="acct-action-btn acct-action-inv" onclick="openAddInventoryModal(currentMerchantProfileId)">
-            ➕ إضافة عهدة
-          </button>
-          <button class="acct-action-btn acct-action-settle" onclick="openSettlementModal(currentMerchantProfileId)">
-            🧮 حساب الكروت
-          </button>
-          <button class="acct-action-btn acct-action-collect" onclick="document.getElementById('settlementReceiveInput')?.focus()">
-            💾 حفظ التسوية
+          <button class="acct-action-btn acct-action-collect" onclick="document.getElementById('settlementReceiveInput')?.focus()" style="flex:1;">
+            💾 تسجيل تحصيل نقدي
           </button>
           <div class="acct-action-more-wrap">
             <button class="acct-action-btn acct-action-more" onclick="toggleAcctMoreMenu()">
@@ -809,12 +787,30 @@
               <button onclick="openCardPriceModal()">⚙️ أسعار الكروت</button>
               <button onclick="openMerchantModal(currentMerchantProfileId)">✏️ تعديل التاجر</button>
               <button onclick="showAcctAuditLog()">📋 سجل العمليات</button>
+              <button onclick="confirmResetMerchant()" style="color:var(--danger);">🔄 إعادة تعيين التاجر</button>
               <button onclick="toggleMerchantArchive()" style="color:var(--danger);">📦 أرشفة التاجر</button>
             </div>
           </div>
         </div>
       </div>
     </section>
+
+    <!-- Installation Details Modal -->
+    <div class="modal-overlay" id="instDetailsModal">
+      <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+          <h3>تفاصيل التركيبات</h3>
+          <button class="modal-close" onclick="document.getElementById('instDetailsModal').classList.remove('open')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h4>التركيبات النشطة</h4>
+            <button class="btn btn-sm btn-primary" onclick="openInstallationModal(currentMerchantProfileId)">+ إضافة تركيب</button>
+          </div>
+          <div id="instDetailsList" style="max-height: 400px; overflow-y: auto; display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- Items Modal -->
     <div class="modal-overlay" id="itemsModal">

@@ -2011,28 +2011,31 @@ tr:hover td { background: var(--surface-hover); }
   flex-shrink: 0;
 }
 
-.acct-date-range {
+.acct-month-nav {
   display: flex;
-  gap: 6px;
   align-items: center;
-}
-
-.acct-date-range input {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-  font-family: 'Inter', system-ui, sans-serif;
+  gap: 8px;
   background: var(--surface);
-  color: var(--text);
-  outline: none;
-  width: 120px;
-  direction: ltr;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
 }
 
-.acct-date-range input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--primary-ring);
+.acct-month-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  transition: background 0.15s, color 0.15s;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.acct-month-btn:hover {
+  background: var(--surface-hover);
+  color: var(--primary);
 }
 
 .acct-header-edit-btn {
